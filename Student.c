@@ -2,19 +2,26 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
-#include <pthread.h>
+#include <pthread.h> // Do obsługi wątków   
 #include <sys/types.h>
 #include <sys/ipc.h>
-#include <sys/shm.h> // do obsługi pamięci dzielonej
+#include <sys/shm.h> // Do obsługi pamięci dzielonej
+#include <sys/sem.h> // Do obsługi semaforów
+#include <errno.h>
 
 #define MIN_STUDENTS 80
 #define MAX_STUDENTS 160
 #define SEM_SIZE sizeof(int)
+#define SEM_DZIEKAN 1
+#define SEM_STUDENT 0
 
 int sem_id, shm_id;
 int ogloszony_kierunek = 0;
 int *shared_mem = NULL;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void sem_p(int sem_id, int sem_num);
+void sem_v(int sem_id, int sem_num);
 
 // Argument wątku przekazywany do funkcji wątku przy rozpoczęciu jego wykonywania (struktura)
 typedef struct {
@@ -82,6 +89,15 @@ int main() {
 	} else {
     	//printf("Pamiec dzielona przypisana poprawnie!\n");
     }
+
+    sem_id = semget(key, 2, IPC_CREAT | 0666);
+	if(sem_id == -1) {
+		perror("Blad tworzenia semaforow!");
+		cleanup();
+		exit(-1);
+	} else {
+		//printf("Zbior semaforow: %d\n", sem_id);
+    }
     
     int liczba_kierunkow = rand() % 11 + 5; // Losowanie liczby kierunków z zakresu 5-15
     printf("Liczba kierunków: %d\n", liczba_kierunkow);
@@ -106,8 +122,10 @@ int main() {
         }
     }
 
+    sem_p(sem_id, SEM_STUDENT);
     ogloszony_kierunek = *shared_mem;
     printf("\nOdebrany ogłoszony kierunek: %d\n", ogloszony_kierunek);
+    sem_v(sem_id, SEM_DZIEKAN);
 
     cleanup();
 
@@ -121,6 +139,52 @@ int main() {
     return 0;
 }
 
+// zmniejszenie wartości semafora - zamknięcie
+void sem_p(int sem_id, int sem_num)
+{
+    int zmien_sem;
+    struct sembuf bufor_sem;
+    bufor_sem.sem_num = sem_num;
+    bufor_sem.sem_op = -1;
+    bufor_sem.sem_flg = 0;
+    zmien_sem=semop(sem_id, &bufor_sem, 1);
+    if (zmien_sem == -1)
+      {
+        if(errno == EINTR){
+        sem_p(sem_id, sem_num);
+        }
+        else
+        {
+        printf("Nie moglem zamknac semafora.\n");
+        exit(EXIT_FAILURE);
+        }
+      }
+    else
+      {
+        printf("Semafor zostal zamkniety.\n");
+      }
+}
+
+// zwiekszenie wartości semafora - otwarcie
+void sem_v(int sem_id, int sem_num)
+{
+	int zmien_sem;
+    struct sembuf bufor_sem;
+    bufor_sem.sem_num = sem_num;
+    bufor_sem.sem_op = 1;
+    bufor_sem.sem_flg = 0; // flaga 0 (zamiast SEM_UNDO) żeby po wyczerpaniu short inta nie wyrzuciło błędu
+    zmien_sem=semop(sem_id, &bufor_sem, 1);
+    if (zmien_sem == -1)
+      {
+        printf("Nie moglem otworzyc semafora.\n");
+        exit(EXIT_FAILURE);
+      }
+    else
+      {
+        printf("Semafor zostal otwarty.\n");
+      }
+}
+
 void cleanup()
 {
 	if (shared_mem != NULL && shmdt(shared_mem) == -1) {
@@ -128,5 +192,8 @@ void cleanup()
     }
     if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
         perror("Blad usuwania segmentu pamieci dzielonej");
+    }
+    if (semctl(sem_id, 0, IPC_RMID) == -1) {
+        perror("Blad usuwania semaforow");
     }
 }
