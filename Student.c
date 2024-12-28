@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/wait.h>
 #include <pthread.h> // Do obsługi wątków   
 #include <sys/types.h>
 #include <sys/ipc.h>
@@ -15,7 +16,7 @@
 #define SEM_DZIEKAN 1
 #define SEM_STUDENT 0
 
-int sem_id, shm_id;
+int sem_id, shm_id, w, x;
 int ogloszony_kierunek = 0;
 int *shared_mem = NULL;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -26,38 +27,40 @@ void sem_v(int sem_id, int sem_num);
 // Argument wątku przekazywany do funkcji wątku przy rozpoczęciu jego wykonywania (struktura)
 typedef struct {
     int kierunek;  // Numer kierunku
-    int liczba_studentow; // Liczba studentów
-} Kierunek;
+    int student_id; // Liczba studentów
+} Student;
 
 // Funkcja symulująca przybycie studentów dla danego kierunku (funkcja wątku)
 void* symuluj_przybycie(void* arg) {
-    Kierunek* dane = (Kierunek*)arg;
+    Student* dane = (Student*)arg;
 
-    for (int i = 1; i <= dane->liczba_studentow; i++) {
-        int czas_przybycia = rand() % 2 + 1; // Losowy czas przybycia (1-2 sekundy)
-        sleep(czas_przybycia); // Symulacja opóźnienia
-        printf("Student %d z kierunku %d przybył do kolejki.\n", i, dane->kierunek);
-    }
+    int czas_przybycia = rand() % 5 + 1; // Losowy czas przybycia (1-5 sekundy)
+    sleep(czas_przybycia); // Symulacja opóźnienia
+    printf("Student %d z kierunku %d przybył do kolejki.\n", dane->student_id, dane->kierunek);
 
     // Oczekiwanie na informację od dziekana
     while (1) {
         pthread_mutex_lock(&mutex); // Zablokowanie mutexu, aby uzyskać wyłączny dostęp do zmiennej
+        ogloszony_kierunek = *shared_mem;
+        //printf("Student %d z kierunku %d sprawdza ogłoszenie: %d oraz pamiec dzielona: %d\n", dane->student_id, dane->kierunek, ogloszony_kierunek, *shared_mem);
         if (ogloszony_kierunek != 0) {
             pthread_mutex_unlock(&mutex); // Odblokowanie mutexu i wyjście z pętli, jeśli dziekan ogłosił kierunek
             break;
-        }
+        } else {
         pthread_mutex_unlock(&mutex); // Odblokowanie mutexu, jeśli dziekan nie ogłosił kierunku aby inne wątki kierunków mogły kontuunować działanie
         sleep(1); // 1 sekunda przerwy przed ponownym sprawdzeniem ogłoszenia w pętli 
+        }
     }
 
-    // Sprawdzenie ogłoszonego kierunku
+    // Reakcja na ogłoszenie dziekana
     if (dane->kierunek == ogloszony_kierunek) {
-        printf("Studenci z kierunku %d wchodzą na egzamin.\n", dane->kierunek);
+        printf("Student %d z kierunku %d wchodzi na egzamin.\n", dane->student_id, dane->kierunek);
     } else {
-        printf("Studenci z kierunku %d wracają do domu.\n", dane->kierunek);
+        printf("Student %d z kierunku %d wraca do domu.\n", dane->student_id, dane->kierunek);
+        pthread_exit(NULL);
     }
 
-    pthread_exit(NULL);
+    //pthread_exit(NULL);
 }
 
 void cleanup();
@@ -68,23 +71,25 @@ int main() {
     key_t key = ftok(".", 'S');
 	if (key == -1){
 		perror("Blad tworzenia klucza!");
-		
+		cleanup();
 		exit(-1);
-	} else
+	} else {
 		//printf("key: %d\n", key);
+    }
 
     shm_id = shmget(key, SEM_SIZE, IPC_CREAT | 0666);
 	if(shm_id == -1){
 		perror("Blad tworzenia segmentu pamieci dzielonej!");
-		
+		cleanup();
 		exit(-1);
-	} else
+	} else {
 		//printf("shm_id: %d\n", shm_id);
+    }
 
     shared_mem = (int *) shmat(shm_id, NULL, 0);
 	if(shared_mem == (int *)(-1)){
 		perror("Blad przylaczenia pamieci dzielonej!");
-		
+		cleanup();
 		exit(-1);
 	} else {
     	//printf("Pamiec dzielona przypisana poprawnie!\n");
@@ -102,23 +107,49 @@ int main() {
     int liczba_kierunkow = rand() % 11 + 5; // Losowanie liczby kierunków z zakresu 5-15
     printf("Liczba kierunków: %d\n", liczba_kierunkow);
 
-    Kierunek kierunki[liczba_kierunkow]; // Tworzenie tablicy struktur kierunków
-    pthread_t watki[liczba_kierunkow]; // Tworzenie tablicy wątków o ilości kierunków
+    int liczba_studentow[liczba_kierunkow]; // Tworzenie tablicy przechowującej ilość studentów na danym kierunku // Tworzenie tablicy struktur kierunków
+    pthread_t watki[liczba_kierunkow][MAX_STUDENTS]; // Tworzenie tablicy wątków o ilości kierunków
 
     printf("\nLosowanie liczby studentów na kierunkach...\n");
     for (int i = 0; i < liczba_kierunkow; i++) {
-        kierunki[i].kierunek = i + 1;
-        kierunki[i].liczba_studentow = rand() % (MAX_STUDENTS - MIN_STUDENTS + 1) + MIN_STUDENTS;
-        printf("Kierunek %d: %d studentów\n", i + 1, kierunki[i].liczba_studentow);
+        liczba_studentow[i] = rand() % (MAX_STUDENTS - MIN_STUDENTS + 1) + MIN_STUDENTS;
+        printf("Kierunek %d: %d studentów\n", i + 1, liczba_studentow[i]);
     }
 
     printf("\nRozpoczynanie symulacji przybycia studentów...\n");
 
-    // Tworzenie wątków dla każdego kierunku
+    // Tworzenie procesów dla każdego kierunku
     for (int i = 0; i < liczba_kierunkow; i++) {
-        if (pthread_create(&watki[i], NULL, symuluj_przybycie, (void*)&kierunki[i]) != 0) {
-            perror("Błąd tworzenia wątku");
-            exit(EXIT_FAILURE);
+        pid_t pid = fork();  // Tworzenie procesu dla danego kierunku
+        if (pid == 0) {  // Jeśli to dziecko (proces kierunku)
+            printf("Proces kierunku %d utworzony, liczba studentów: %d\n", i + 1, liczba_studentow[i]);
+
+            // Tworzenie wątków dla studentów w danym kierunku
+            for (int j = 1; j <= liczba_studentow[i]; j++) {
+                Student* student = (Student*)malloc(sizeof(Student)); // Dynamiczne alokowanie pamięci dla struktury Student i zwrócenie do niej wskaźnika
+                student->kierunek = i + 1;
+                student->student_id = j;
+
+                // Tworzenie wątku dla studenta
+                pthread_create(&watki[i][j-1], NULL, symuluj_przybycie, (void*)student);
+            }
+
+            // Czekanie na zakończenie wątków studentów
+            for (int j = 0; j < liczba_studentow[i]; j++) {
+                pthread_join(watki[i][j], NULL);
+            }
+
+            // Sprawdzenie, czy proces jest procesem wybranego kierunku
+            if (i + 1 != ogloszony_kierunek) {
+                exit(0);  // Zakończenie procesu kierunku, jeśli nie jest to wybrany kierunek
+            } else {
+                /* 
+                    Miejsce na przyszły kod dla procesu wybranego kierunku
+                */
+                exit(0);
+            }
+        } else {
+            printf("Proces główny: utworzono proces dla kierunku %d.\n", i + 1);
         }
     }
 
@@ -127,12 +158,16 @@ int main() {
     printf("\nOdebrany ogłoszony kierunek: %d\n", ogloszony_kierunek);
     sem_v(sem_id, SEM_DZIEKAN);
 
-    cleanup();
-
-    // Czekanie na zakończenie wszystkich wątków
-    for (int i = 0; i < liczba_kierunkow; i++) {
-        pthread_join(watki[i], NULL);
+    // Czekanie na zakończenie wszystkich procesów potomnych
+    while ((w = wait(&x)) > 0) {
+        if (w == -1) {
+            perror("Blad oczekiwania na zakonczenie procesu potomnego!");
+            exit(3);
+        }
+        printf("Zakonczyl sie proces potomny o PID=%d i statusie = %d\n", w, x);
     }
+
+    cleanup();
 
     printf("\nSymulacja zakończona.\n");
     
@@ -187,6 +222,7 @@ void sem_v(int sem_id, int sem_num)
 
 void cleanup()
 {
+    printf("Zostala wywolana funkcja czyszczaca!");
 	if (shared_mem != NULL && shmdt(shared_mem) == -1) {
         perror("Blad odlaczania pamieci dzielonej");
     }
