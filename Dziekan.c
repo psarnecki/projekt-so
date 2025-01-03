@@ -52,14 +52,14 @@ int main() {
 	} else
 		//printf("Zbior semaforow: %d\n", sem_id);
 
-    semctl(sem_id, SEM_DZIEKAN, SETVAL, 1);
+  semctl(sem_id, SEM_DZIEKAN, SETVAL, 1);
 	semctl(sem_id, SEM_STUDENT, SETVAL, 0);
 
     int kierunek = rand() % 10 + 1; // Kierunki od 1 do 10
     printf("Dziekan ogłasza: Kierunek %d pisze egzamin.\n", kierunek);
 
     sem_p(sem_id, SEM_DZIEKAN);
-    *shared_mem = kierunek; // Zapisanie numeru kierunku do pamięci współdzielonej    printf("Producent: Wyprodukowalem znak: %c\n", c);
+    *shared_mem = kierunek; // Zapisanie numeru kierunku do pamięci współdzielonej
     sem_v(sem_id, SEM_STUDENT);
 
     printf("Dziekan zakończył działanie.\n");
@@ -77,8 +77,7 @@ void sem_p(int sem_id, int sem_num)
     bufor_sem.sem_op = -1;
     bufor_sem.sem_flg = 0;
     zmien_sem=semop(sem_id, &bufor_sem, 1);
-    if (zmien_sem == -1)
-      {
+    if (zmien_sem == -1){
         if(errno == EINTR){
         sem_p(sem_id, sem_num);
         }
@@ -87,11 +86,7 @@ void sem_p(int sem_id, int sem_num)
         printf("Nie moglem zamknac semafora.\n");
         exit(EXIT_FAILURE);
         }
-      }
-    else
-      {
-        printf("Semafor zostal zamkniety.\n");
-      }
+    }
 }
 
 // zwiekszenie wartości semafora - otwarcie
@@ -103,15 +98,10 @@ void sem_v(int sem_id, int sem_num)
     bufor_sem.sem_op = 1;
     bufor_sem.sem_flg = 0; // flaga 0 (zamiast SEM_UNDO) żeby po wyczerpaniu short inta nie wyrzuciło błędu
     zmien_sem=semop(sem_id, &bufor_sem, 1);
-    if (zmien_sem == -1)
-      {
+    if (zmien_sem == -1){
         printf("Nie moglem otworzyc semafora.\n");
         exit(EXIT_FAILURE);
-      }
-    else
-      {
-        printf("Semafor zostal otwarty.\n");
-      }
+    }
 }
 
 void cleanup()
