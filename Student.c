@@ -18,10 +18,13 @@
 #define SEM_KOMISJA 0
 #define SEM_EGZAMIN 1
 #define SEM_BUDYNEK 2
+#define SEM_ILE_STUDENTOW_1 3
+#define SEM_ILE_STUDENTOW_2 4
 
 int sem_id, sem_komisja_id, shm_id, shm_komisja_id, w, x;
 int ogloszony_kierunek = 0;
 int *shared_mem = NULL;
+int *liczba_studentow = NULL; // Wskaźnik do tablicy z liczbami studentów na każdym kierunku
 
 void sem_p(int sem_id, int sem_num);
 void sem_v(int sem_id, int sem_num);
@@ -29,6 +32,7 @@ void sem_v(int sem_id, int sem_num);
 typedef struct {
     int student_pid;
     int ocena;
+    int ile_kierunek;
 } Ocena;
 
 Ocena *shared_ocena;
@@ -42,6 +46,8 @@ typedef struct {
 // Funkcja symulująca przybycie studenta do kolejki przed budynkiem
 void symuluj_przybycie(Student* dane) {
     printf("Student o PID %d z kierunku %d przybył do kolejki.\n", dane->pid, dane->kierunek);
+
+    int ile_studentow = 0;
 
     // Oczekiwanie na ogłoszenie od dziekana
     while (1) {
@@ -57,6 +63,15 @@ void symuluj_przybycie(Student* dane) {
 
     // Reakcja na ogłoszenie dziekana
     if (dane->kierunek == ogloszony_kierunek) {
+
+        // Przekazanie informacji z ilością studentów do programu Komisja
+        if(ile_studentow == 0){
+            ile_studentow = liczba_studentow[ogloszony_kierunek - 1];
+            sem_p(sem_komisja_id, SEM_ILE_STUDENTOW_1);
+            shared_ocena->ile_kierunek = ile_studentow;
+            sem_v(sem_komisja_id, SEM_ILE_STUDENTOW_2);
+        }
+
         sem_p(sem_komisja_id, SEM_BUDYNEK); // Czekanie na dostępne miejsce do egzaminu
         printf("Student %d z kierunku %d wchodzi na egzamin.\n", dane->pid, dane->kierunek);
 
@@ -113,7 +128,7 @@ int main() {
     }
 
     sem_id = semget(key, 2, IPC_CREAT | 0666);
-    sem_komisja_id = semget(key_komisja, 3, IPC_CREAT | 0666);
+    sem_komisja_id = semget(key_komisja, 5, IPC_CREAT | 0666);
     if (sem_id == -1 || sem_komisja_id == -1) {
         perror("Błąd tworzenia semaforów!");
         cleanup();
@@ -123,7 +138,7 @@ int main() {
     int liczba_kierunkow = rand() % 11 + 5; // Losowanie liczby kierunków
     printf("Liczba kierunków: %d\n", liczba_kierunkow);
 
-    int liczba_studentow[liczba_kierunkow]; // Tworzenie tablicy przechowującej ilość studentów na danym kierunku
+    liczba_studentow = (int *)malloc(liczba_kierunkow * sizeof(int)); // Tworzenie tablicy przechowującej ilość studentów na danym kierunku
 
     printf("\nLosowanie liczby studentów na kierunkach...\n");
     for (int i = 0; i < liczba_kierunkow; i++) {

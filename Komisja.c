@@ -13,6 +13,8 @@
 #define SEM_KOMISJA 0
 #define SEM_EGZAMIN 1
 #define SEM_BUDYNEK 2
+#define SEM_ILE_STUDENTOW_1 3
+#define SEM_ILE_STUDENTOW_2 4
 
 int sem_komisja_id, shm_komisja_id, w, x;
 
@@ -22,6 +24,7 @@ void sem_v(int sem_id, int sem_num);
 typedef struct {
     int student_pid;
     int ocena;
+    int ile_kierunek;
 } Ocena;
 
 Ocena *shared_ocena;
@@ -31,8 +34,22 @@ void* czlonek_komisji() {}
 
 // Funkcja procesu komisji
 void* komisja_A() {
+    printf("Komisja A: Wątek przewodniczącego uruchomiony.\n");
+
+    int ile_studentow, ile_ocen = 0;
+
+    sem_p(sem_komisja_id, SEM_ILE_STUDENTOW_2);
+    ile_studentow = shared_ocena->ile_kierunek;
+    sem_v(sem_komisja_id, SEM_ILE_STUDENTOW_1);
+
     while (1) {
+        sem_p(sem_komisja_id, SEM_ILE_STUDENTOW_2);
+        ile_studentow = shared_ocena->ile_kierunek;
+        sem_v(sem_komisja_id, SEM_ILE_STUDENTOW_1);
+
         sem_p(sem_komisja_id, SEM_KOMISJA); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
+
+        printf("Liczba studentów na kierunku: %d\n", ile_studentow);
 
         // Sprawdzenie, czy są jeszcze studenci do egzaminu
         int studenci_w_budynku = semctl(sem_komisja_id, SEM_BUDYNEK, GETVAL);
@@ -51,6 +68,13 @@ void* komisja_A() {
 
         printf("Komisja wystawiła ocenę: %d dla PID: %d\n", ocena, shared_ocena->student_pid);
 
+        ile_ocen++;
+        printf("Aktualna liczba studentów z oceną: %d\n", ile_ocen);
+
+        if (ile_ocen == ile_studentow) {
+            printf("Komisja A: Wszyscy studenci z kierunku podeszli do egzaminu praktycznego. Komisja kończy pracę.\n");
+            break;  // Zakończenie pracy komisji
+        }
     }
 }
 
@@ -117,7 +141,7 @@ int main() {
     }
 
     // Tworzenie semafora
-    sem_komisja_id = semget(key_komisja, 3, IPC_CREAT | 0666);
+    sem_komisja_id = semget(key_komisja, 5, IPC_CREAT | 0666);
     if (sem_komisja_id == -1) {
         perror("Błąd tworzenia semaforów!");
         exit(EXIT_FAILURE);
@@ -126,6 +150,8 @@ int main() {
     semctl(sem_komisja_id, SEM_BUDYNEK, SETVAL, 3);
     semctl(sem_komisja_id, SEM_KOMISJA, SETVAL, 0); 
     semctl(sem_komisja_id, SEM_EGZAMIN, SETVAL, 1);
+    semctl(sem_komisja_id, SEM_ILE_STUDENTOW_1, SETVAL, 1);
+    semctl(sem_komisja_id, SEM_ILE_STUDENTOW_2, SETVAL, 0);
 
     // Tworzenie procesu komisji A
     if (fork() == 0) {
