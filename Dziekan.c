@@ -26,28 +26,28 @@ int main() {
     if (key == -1) {
         perror("Błąd tworzenia klucza!");
         cleanup();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
     shm_id = shmget(key, SEM_SIZE, IPC_CREAT | 0666);
     if (shm_id == -1) {
         perror("Błąd tworzenia segmentu pamięci dzielonej!");
         cleanup();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
     shared_mem = (int *) shmat(shm_id, NULL, 0);
     if (shared_mem == (int *)(-1)) {
         perror("Błąd przyłączenia pamięci dzielonej!");
         cleanup();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
     sem_id = semget(key, 2, IPC_CREAT | 0666);
     if (sem_id == -1) {
         perror("Błąd tworzenia semaforów!");
         cleanup();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
     semctl(sem_id, SEM_DZIEKAN, SETVAL, 1);
@@ -66,7 +66,7 @@ int main() {
     return 0;
 }
 
-// zmniejszenie wartości semafora - zamknięcie
+// Zmniejszenie wartości semafora - zamknięcie
 void sem_p(int sem_id, int sem_num) {
     int zmien_sem;
     struct sembuf bufor_sem;
@@ -78,13 +78,13 @@ void sem_p(int sem_id, int sem_num) {
         if(errno == EINTR){
         sem_p(sem_id, sem_num);
         } else {
-        printf("(Student) Nie mogłem zamknąć semafora.\n");
+        perror("(Student) Nie mogłem zamknąć semafora.\n");
         exit(EXIT_FAILURE);
         }
     }
 }
 
-// zwiększenie wartości semafora - otwarcie
+// Zwiększenie wartości semafora - otwarcie
 void sem_v(int sem_id, int sem_num) {
 	  int zmien_sem;
     struct sembuf bufor_sem;
@@ -93,7 +93,7 @@ void sem_v(int sem_id, int sem_num) {
     bufor_sem.sem_flg = 0; // flaga 0 (zamiast SEM_UNDO) żeby po wyczerpaniu short inta nie wyrzuciło błędu
     zmien_sem=semop(sem_id, &bufor_sem, 1);
     if (zmien_sem == -1){
-        printf("Nie mogłem otworzyć semafora.\n");
+        perror("Nie mogłem otworzyć semafora.\n");
         exit(EXIT_FAILURE);
     }
 }

@@ -12,13 +12,17 @@
 #include <errno.h>
 
 #define SEM_EGZAMIN_PRAKTYCZNY 0
-#define SEM_KOMISJA 1
-#define SEM_EGZAMIN 2
+#define SEM_KOMISJA_A 1
+#define SEM_EGZAMIN_A 2
 #define SEM_ILE_STUDENTOW_1 3
 #define SEM_ILE_STUDENTOW_2 4
-#define STUDENT_TO_COMMISSION 1
+#define STUDENT_TO_COMMISSION_A 1
+#define SEM_EGZAMIN_TEORETYCZNY 0
+#define SEM_KOMISJA_B 1
+#define SEM_EGZAMIN_B 2
+#define STUDENT_TO_COMMISSION_B 2
 
-int sem_komisja_id, shm_komisja_id, msgid, w, x;
+int sem_komisja_A_id, sem_komisja_B_id, shm_komisja_id, msgid, w, x;
 
 void sem_p(int sem_id, int sem_num);
 void sem_v(int sem_id, int sem_num);
@@ -26,14 +30,17 @@ void sem_v(int sem_id, int sem_num);
 struct message {
     long msg_type;  // Typ komunikatu
     int pid;        // PID studenta
-    int ocena;      // Ocena (dla odpowiedzi)
+    int ocena_A;      // Ocena (dla odpowiedzi)
+    int ocena_B;
 };
 
 typedef struct {
     int ile_kierunek;   // Liczba studentów na ogłoszonym kierunku
-} Ile_studentow_info;
+    int ile_studentow;   // Liczba studentów z pozytywną oceną po egzaminie praktycznym
+    int komisja_A_koniec;   // Flaga informująca o końcu pracy komisji A
+} Student_info;
 
-Ile_studentow_info *shared_info;
+Student_info *shared_info;
 
 // Funkcja wątku: symulacja pracy członka komisji
 void* czlonek_komisji() {}
@@ -42,26 +49,26 @@ void* czlonek_komisji() {}
 void* komisja_A() {
     printf("Komisja A: Wątek przewodniczącego uruchomiony.\n");
 
-    int ile_studentow, ile_ocen = 0;
-    
+    int ile_studentow, ile_ocen = 0, ile_zdane = 0;
+
     while (1) {
-        sem_p(sem_komisja_id, SEM_ILE_STUDENTOW_2);
+        sem_p(sem_komisja_A_id, SEM_ILE_STUDENTOW_2);
         ile_studentow = shared_info->ile_kierunek;
-        sem_v(sem_komisja_id, SEM_ILE_STUDENTOW_1);
+        sem_v(sem_komisja_A_id, SEM_ILE_STUDENTOW_1);
 
         printf("Liczba studentów na kierunku: %d\n", ile_studentow);
 
-        sem_p(sem_komisja_id, SEM_KOMISJA); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
+        sem_p(sem_komisja_A_id, SEM_KOMISJA_A); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
 
         struct message msg;
 
         // Odbieranie PIDu studenta
-        if (msgrcv(msgid, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_COMMISSION, 0) == -1) {
+        if (msgrcv(msgid, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_COMMISSION_A, 0) == -1) {
             perror("msgrcv");
             continue;
         } else {
             //printf("Odebrałem pid studetna %d\n", msg.pid);
-        }        
+        }      
 
         printf("Komisja A: Przygotowuję pytania.\n");
         //sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
@@ -70,29 +77,84 @@ void* komisja_A() {
         // Tutaj ewentualnie można dodać semafor który będzie odbierał informacje o gotowych pytaniach 
 
         // Przypisanie losowej oceny do PIDu studenta
-        msg.ocena = rand() % 5 + 1;
+        msg.ocena_A = rand() % 5 + 1;
         msg.msg_type = msg.pid;
 
         // Wysyłanie oceny za odpowiedź do studenta
         if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
         } else {
-            printf("Komisja wystawiła ocenę: %d dla PID: %d\n", msg.ocena, msg.pid);
+            printf("Komisja wystawiła ocenę: %d dla PID: %d\n", msg.ocena_A, msg.pid);
+        }
+
+        if(msg.ocena_A >= 3){
+            ile_zdane++;
+            //printf("Aktualna liczba studentów z pozytywną oceną: %d\n", ile_zdane);
         }
 
         ile_ocen++;
         printf("Aktualna liczba studentów z oceną: %d\n", ile_ocen);
 
         if (ile_ocen == ile_studentow) {
+            printf("!!! Liczba studentów z pozytywną oceną: %d !!!\n", ile_zdane);
             printf("Komisja A: Wszyscy studenci z kierunku podeszli do egzaminu praktycznego. Komisja kończy pracę.\n");
+
+            //shared_info->ile_studentow = ile_zdane;
+            shared_info->komisja_A_koniec = 1;
             break;  // Zakończenie pracy komisji
         }
     }
-
     pthread_exit(NULL);
 }
 
-void* komisja_B() {}
+void* komisja_B() {
+     printf("Komisja B: Wątek przewodniczącego uruchomiony.\n");
+
+    int ile_studentow, ile_ocen = 0, czy_koniec = 0;
+    
+    while (1) {
+        sem_p(sem_komisja_B_id, SEM_KOMISJA_B); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
+
+        struct message msg;
+
+        // Odbieranie PIDu studenta
+        if (msgrcv(msgid, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_COMMISSION_B, 0) == -1) {
+            perror("msgrcv");
+            continue;
+        } else {
+            //printf("Odebrałem pid studetna %d\n", msg.pid);
+        }        
+
+        printf("Komisja B: Przygotowuję pytania.\n");
+        //sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
+        printf("Komisja B: Pytania gotowe.\n");
+
+        // Tutaj ewentualnie można dodać semafor który będzie odbierał informacje o gotowych pytaniach 
+
+        // Przypisanie losowej oceny do PIDu studenta
+        msg.ocena_B = rand() % 5 + 1;
+        msg.msg_type = msg.pid;
+
+        // Wysyłanie oceny za odpowiedź do studenta
+        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+            perror("msgsnd");
+        } else {
+            printf("Komisja B wystawiła ocenę: %d dla PID: %d\n", msg.ocena_B, msg.pid);
+        }
+
+        ile_ocen++;
+        printf("Aktualna liczba studentów z oceną B: %d\n", ile_ocen);
+
+        //ile_studentow = shared_info->ile_studentow;
+        czy_koniec = shared_info->komisja_A_koniec;
+
+        if (/*ile_studentow == ile_ocen &&*/ czy_koniec == 1) {
+            printf("Komisja B: Wszyscy studenci z kierunku podeszli do egzaminu teoretycznego. Komisja kończy pracę.\n");
+            break;  // Zakończenie pracy komisji
+        }
+    }
+    pthread_exit(NULL);
+}
 
 void stworz_komisja_A() {
     pthread_t przewodniczacy, czlonek_1, czlonek_2;
@@ -133,44 +195,54 @@ void cleanup();
 int main() {
     srand(time(NULL));  // Inicjalizacja generatora liczb losowych
 
-    key_t key_komisja = ftok(".", 'D');
-    key_t key_msg_A = ftok(".", 'A'); // Tworzenie klucza
+    key_t key_komisja_A = ftok(".", 'A');
+    key_t key_komisja_B = ftok(".", 'B');
+    key_t key_msg = ftok(".", 'M'); // Tworzenie klucza
 
-    if (key_komisja == -1) {
+    if (key_komisja_A == -1 || key_komisja_B == -1|| key_msg == -1) {
         perror("Błąd tworzenia klucza!");
         cleanup();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
-    shm_komisja_id = shmget(key_komisja, sizeof(Ile_studentow_info), IPC_CREAT | 0666);
+    shm_komisja_id = shmget(key_komisja_A, sizeof(Student_info), IPC_CREAT | 0666);
     if (shm_komisja_id == -1) {
         perror("Błąd tworzenia segmentu pamięci dzielonej!");
         cleanup();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     
-    shared_info = (Ile_studentow_info *)shmat(shm_komisja_id, NULL, 0);
-    if (shared_info == (Ile_studentow_info *)(-1)) {
+    shared_info = (Student_info *)shmat(shm_komisja_id, NULL, 0);
+    if (shared_info == (Student_info *)(-1)) {
         perror("Błąd przyłączenia pamięci dzielonej!");
         cleanup();
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
-    msgid = msgget(key_msg_A, 0666 | IPC_CREAT);
-
+    msgid = msgget(key_msg, 0666 | IPC_CREAT);
+    if (msgid == -1) {
+        perror("Błąd tworzenia kolejki komunikatów!");
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
 
     // Tworzenie semafora
-    sem_komisja_id = semget(key_komisja, 5, IPC_CREAT | 0666);
-    if (sem_komisja_id == -1) {
+    sem_komisja_A_id = semget(key_komisja_A, 5, IPC_CREAT | 0666);
+    sem_komisja_B_id = semget(key_komisja_B, 3, IPC_CREAT | 0666);
+    if (sem_komisja_A_id == -1 || sem_komisja_B_id == -1) {
         perror("Błąd tworzenia semaforów!");
         exit(EXIT_FAILURE);
     }
 
-    semctl(sem_komisja_id, SEM_KOMISJA, SETVAL, 0); 
-    semctl(sem_komisja_id, SEM_EGZAMIN, SETVAL, 1);
-    semctl(sem_komisja_id, SEM_EGZAMIN_PRAKTYCZNY, SETVAL, 3);
-    semctl(sem_komisja_id, SEM_ILE_STUDENTOW_1, SETVAL, 1);
-    semctl(sem_komisja_id, SEM_ILE_STUDENTOW_2, SETVAL, 0);
+    semctl(sem_komisja_A_id, SEM_KOMISJA_A, SETVAL, 0); 
+    semctl(sem_komisja_A_id, SEM_EGZAMIN_A, SETVAL, 1);
+    semctl(sem_komisja_A_id, SEM_EGZAMIN_PRAKTYCZNY, SETVAL, 3);
+    semctl(sem_komisja_A_id, SEM_ILE_STUDENTOW_1, SETVAL, 1);
+    semctl(sem_komisja_A_id, SEM_ILE_STUDENTOW_2, SETVAL, 0);
+
+    semctl(sem_komisja_B_id, SEM_KOMISJA_B, SETVAL, 0); 
+    semctl(sem_komisja_B_id, SEM_EGZAMIN_B, SETVAL, 1);
+    semctl(sem_komisja_B_id, SEM_EGZAMIN_TEORETYCZNY, SETVAL, 3);
 
     // Tworzenie procesu komisji A
     if (fork() == 0) {
@@ -188,7 +260,7 @@ int main() {
         while ((w = wait(&x)) > 0) {
         if (w == -1) {
             perror("Błąd oczekiwania na zakończenie procesu potomnego!");
-            exit(3);
+            exit(EXIT_FAILURE);
         }
         //printf("Zakonczyl sie proces potomny o PID=%d i statusie = %d\n", w, x);
     }
@@ -196,6 +268,8 @@ int main() {
     printf("Wszystkie procesy komisji zakończyły działanie.\n");
 
     cleanup();
+
+    printf("\nSymulacja zakończona.\n");
 
     return 0;
 }
@@ -212,11 +286,9 @@ void sem_p(int sem_id, int sem_num) {
         if(errno == EINTR){
         sem_p(sem_id, sem_num);
         } else {
-        printf("(Komisja) Nie mogłem zamknąć semafora.\n");
+        perror("(Komisja) Nie mogłem zamknąć semafora.\n");
         exit(EXIT_FAILURE);
         }
-    } else {
-        //printf("(Komisja) Zamknięto semafor!\n");
     }
 }
 
@@ -229,10 +301,8 @@ void sem_v(int sem_id, int sem_num) {
     bufor_sem.sem_flg = 0; // flaga 0 (zamiast SEM_UNDO) żeby po wyczerpaniu short inta nie wyrzuciło błędu
     zmien_sem=semop(sem_id, &bufor_sem, 1);
     if (zmien_sem == -1){
-        printf("Nie mogłem otworzyć semafora.\n");
+        perror("Nie mogłem otworzyć semafora.\n");
         exit(EXIT_FAILURE);
-    } else {
-        //printf("(Komisja) Otwarto semafor!\n");
     }
 }
 
@@ -244,8 +314,11 @@ void cleanup() {
     if (shmctl(shm_komisja_id, IPC_RMID, NULL) == -1) {
         perror("Błąd usuwania segmentu pamięci dzielonej Student-Komisja!");
     }
-    if (semctl(sem_komisja_id, 0, IPC_RMID) == -1) {
-        perror("Błąd usuwania semaforów Student-Komisja!");
+    if (semctl(sem_komisja_A_id, 0, IPC_RMID) == -1) {
+        perror("Błąd usuwania semaforów Student-Komisja A!");
+    }
+    if (semctl(sem_komisja_B_id, 0, IPC_RMID) == -1) {
+        perror("Błąd usuwania semaforów Student-Komisja B!");
     }
     if(msgctl(msgid, IPC_RMID, NULL) == -1){
         perror("Błąd usuwania kolejki komunikatów!");
