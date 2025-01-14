@@ -11,6 +11,7 @@
 #include <sys/msg.h> // Do obsługi kolejki komunikatów
 #include <errno.h>
 
+#define LICZBA_OCEN 6
 #define SEM_EGZAMIN_PRAKTYCZNY 0
 #define SEM_KOMISJA_A 1
 #define SEM_EGZAMIN_A 2
@@ -23,6 +24,7 @@
 #define STUDENT_TO_COMMISSION_B 2
 
 int sem_komisja_A_id, sem_komisja_B_id, shm_komisja_id, msgid, w, x;
+float oceny[] = {5.0, 4.5, 4.0, 3.5, 3.0, 2.0};
 
 void sem_p(int sem_id, int sem_num);
 void sem_v(int sem_id, int sem_num);
@@ -30,8 +32,8 @@ void sem_v(int sem_id, int sem_num);
 struct message {
     long msg_type;  // Typ komunikatu
     int pid;        // PID studenta
-    int ocena_A;      // Ocena (dla odpowiedzi)
-    int ocena_B;
+    float ocena_A;      // Ocena (dla odpowiedzi)
+    float ocena_B;
 };
 
 typedef struct {
@@ -68,38 +70,38 @@ void* komisja_A() {
             continue;
         } else {
             //printf("Odebrałem pid studetna %d\n", msg.pid);
-        }      
+        }
 
-        printf("Komisja A: Przygotowuję pytania.\n");
-        //sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
-        printf("Komisja A: Pytania gotowe.\n");
+        ///printf("Komisja A: Przygotowuję pytania.\n");
+        sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
+        ///printf("Komisja A: Pytania gotowe.\n");
 
         // Tutaj ewentualnie można dodać semafor który będzie odbierał informacje o gotowych pytaniach 
 
         // Przypisanie losowej oceny do PIDu studenta
-        msg.ocena_A = rand() % 5 + 1;
+        msg.ocena_A = oceny[rand() % LICZBA_OCEN];
         msg.msg_type = msg.pid;
 
         // Wysyłanie oceny za odpowiedź do studenta
         if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
         } else {
-            printf("Komisja wystawiła ocenę: %d dla PID: %d\n", msg.ocena_A, msg.pid);
+            printf("Komisja wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_A, msg.pid);
         }
 
-        if(msg.ocena_A >= 3){
+        if(msg.ocena_A >= 3.0){
             ile_zdane++;
             //printf("Aktualna liczba studentów z pozytywną oceną: %d\n", ile_zdane);
         }
 
         ile_ocen++;
-        printf("Aktualna liczba studentów z oceną: %d\n", ile_ocen);
+        printf("Aktualna liczba studentów z oceną A: %d\n", ile_ocen);
 
         if (ile_ocen == ile_studentow) {
             printf("!!! Liczba studentów z pozytywną oceną: %d !!!\n", ile_zdane);
             printf("Komisja A: Wszyscy studenci z kierunku podeszli do egzaminu praktycznego. Komisja kończy pracę.\n");
 
-            //shared_info->ile_studentow = ile_zdane;
+            shared_info->ile_studentow = ile_zdane;
             shared_info->komisja_A_koniec = 1;
             break;  // Zakończenie pracy komisji
         }
@@ -108,7 +110,7 @@ void* komisja_A() {
 }
 
 void* komisja_B() {
-     printf("Komisja B: Wątek przewodniczącego uruchomiony.\n");
+    printf("Komisja B: Wątek przewodniczącego uruchomiony.\n");
 
     int ile_studentow, ile_ocen = 0, czy_koniec = 0;
     
@@ -125,30 +127,30 @@ void* komisja_B() {
             //printf("Odebrałem pid studetna %d\n", msg.pid);
         }        
 
-        printf("Komisja B: Przygotowuję pytania.\n");
-        //sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
-        printf("Komisja B: Pytania gotowe.\n");
+        ///printf("Komisja B: Przygotowuję pytania.\n");
+        sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
+        ///printf("Komisja B: Pytania gotowe.\n");
 
         // Tutaj ewentualnie można dodać semafor który będzie odbierał informacje o gotowych pytaniach 
 
         // Przypisanie losowej oceny do PIDu studenta
-        msg.ocena_B = rand() % 5 + 1;
+        msg.ocena_B = oceny[rand() % LICZBA_OCEN];
         msg.msg_type = msg.pid;
 
         // Wysyłanie oceny za odpowiedź do studenta
         if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
         } else {
-            printf("Komisja B wystawiła ocenę: %d dla PID: %d\n", msg.ocena_B, msg.pid);
+            printf("Komisja B wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_B, msg.pid);
         }
 
         ile_ocen++;
         printf("Aktualna liczba studentów z oceną B: %d\n", ile_ocen);
 
-        //ile_studentow = shared_info->ile_studentow;
+        ile_studentow = shared_info->ile_studentow;
         czy_koniec = shared_info->komisja_A_koniec;
 
-        if (/*ile_studentow == ile_ocen &&*/ czy_koniec == 1) {
+        if (ile_studentow == ile_ocen && czy_koniec == 1) {
             printf("Komisja B: Wszyscy studenci z kierunku podeszli do egzaminu teoretycznego. Komisja kończy pracę.\n");
             break;  // Zakończenie pracy komisji
         }

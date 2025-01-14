@@ -8,12 +8,13 @@
 #include <sys/shm.h> // Do obsługi pamięci dzielonej
 #include <sys/sem.h> // Do obsługi semaforów
 #include <sys/msg.h> // Do obsługi kolejki komunikatów
+#include <signal.h> // do obsługi sygnałów
 #include <errno.h>
 
 #define MIN_STUDENTS 80
 #define MAX_STUDENTS 160
-#define SEM_SIZE sizeof(int)
-#define PREPARE_TIME 0
+#define PREPARE_TIME 3
+#define STUDENT_TO_DEAN 3
 #define SEM_DZIEKAN 1
 #define SEM_STUDENT 0
 #define SEM_EGZAMIN_PRAKTYCZNY 0
@@ -27,7 +28,7 @@
 #define SEM_EGZAMIN_B 2
 #define STUDENT_TO_COMMISSION_B 2
 
-int sem_id, sem_komisja_A_id, sem_komisja_B_id, shm_id, shm_komisja_id, msgid, w, x;
+int sem_id, sem_komisja_A_id, sem_komisja_B_id, shm_id, shm_komisja_id, msgid, msg_dziekan, w, x;
 int ogloszony_kierunek = 0;
 int *shared_mem = NULL;
 int *liczba_studentow = NULL; // Wskaźnik do tablicy z liczbami studentów na każdym kierunku
@@ -38,8 +39,8 @@ void sem_v(int sem_id, int sem_num);
 struct message {
     long msg_type;  // Typ komunikatu
     int pid;        // PID studenta
-    int ocena_A;      // Ocena (dla odpowiedzi)
-    int ocena_B;
+    float ocena_A;      // Ocena (dla odpowiedzi)
+    float ocena_B;
 };
 
 typedef struct {
@@ -55,6 +56,8 @@ typedef struct {
     int kierunek;
     pid_t pid;     // PID procesu studenta jako identyfikator studenta
 } Student;
+
+void handle_signal(int sig);
 
 void symuluj_przybycie(Student* dane) {
     //printf("Student o PID %d z kierunku %d przybył do kolejki.\n", dane->pid, dane->kierunek);
@@ -75,6 +78,24 @@ void symuluj_przybycie(Student* dane) {
 
     // Reakcja na ogłoszenie dziekana
     if (dane->kierunek == ogloszony_kierunek) {
+        signal(SIGUSR1, handle_signal);
+
+        ile_studentow = liczba_studentow[ogloszony_kierunek - 1];
+        shared_info->ile_kierunek = ile_studentow;
+
+        struct message msg;
+        msg.msg_type = STUDENT_TO_DEAN;
+        msg.pid = dane->pid; // PID studenta
+
+        // Wysyłanie PIDu studenta
+        if (msgsnd(msg_dziekan, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+            perror("msgsnd");
+            exit(1);
+        }
+
+        // trzeba tutaj dodac semafor otwierajcy zapisywanie pidow do dziekana
+
+        ile_studentow = 0; // to w przyszlosci trzeba usunac jak bedzie semafor i zmienic warunek z przekazaniem informacji z iloscia studentow do komisji
 
         // Przekazanie informacji z ilością studentów do programu Komisja
         if(ile_studentow == 0){
@@ -85,11 +106,11 @@ void symuluj_przybycie(Student* dane) {
         }
 
         sem_p(sem_komisja_A_id, SEM_EGZAMIN_PRAKTYCZNY); // Czekanie na dostępne miejsce do egzaminu
-        printf("Student %d z kierunku %d wchodzi na egzamin praktyczny.\n", dane->pid, dane->kierunek);
+        ///printf("Student %d z kierunku %d wchodzi na egzamin praktyczny.\n", dane->pid, dane->kierunek);
 
         sem_p(sem_komisja_A_id, SEM_EGZAMIN_A);  // Sprawdzenie czy można podejść do komisji
 
-        struct message msg;
+
         msg.msg_type = STUDENT_TO_COMMISSION_A;
         msg.pid = dane->pid; // PID studenta
 
@@ -111,19 +132,19 @@ void symuluj_przybycie(Student* dane) {
             perror("msgrcv");
             exit(1);
         } else {
-            printf("Student %d otrzymał ocenę A: %d\n", msg.pid, msg.ocena_A);
+            ///printf("Student %d otrzymał ocenę A: %.1f\n", msg.pid, msg.ocena_A);
         }
 
         sem_v(sem_komisja_A_id, SEM_EGZAMIN_A); // Zwolnienie miejsca do komisji po zakończeniu egzaminu
 
-        printf("Student %d zwalnia miejsce na egzamin praktyczny.\n", dane->pid);
+        ///printf("Student %d zwalnia miejsce na egzamin praktyczny.\n", dane->pid);
         sem_v(sem_komisja_A_id, SEM_EGZAMIN_PRAKTYCZNY);  // Zwolnienie miejsca do egzaminu po zakończeniu egzaminu
 
-        if (msg.ocena_A >= 3) {
-            printf("Student %d kwalifikuje się do Komisji B z oceną: %d\n", msg.pid, msg.ocena_A);
+        if (msg.ocena_A >= 3.0) {
+            ///printf("Student %d kwalifikuje się do Komisji B z oceną: %.1f\n", msg.pid, msg.ocena_A);
 
             sem_p(sem_komisja_B_id, SEM_EGZAMIN_TEORETYCZNY); // Czekanie na dostępne miejsce do egzaminu
-            printf("Student %d z kierunku %d wchodzi na egzamin teoretyczny.\n", dane->pid, dane->kierunek);
+            ///printf("Student %d z kierunku %d wchodzi na egzamin teoretyczny.\n", dane->pid, dane->kierunek);
 
             sem_p(sem_komisja_B_id, SEM_EGZAMIN_B);  // Sprawdzenie czy można podejść do komisji
 
@@ -149,15 +170,15 @@ void symuluj_przybycie(Student* dane) {
                 perror("msgrcv");
                 exit(1);
             } else {
-                printf("Student %d otrzymał ocenę B: %d\n", msg.pid, msg.ocena_B);
+                ///printf("Student %d otrzymał ocenę B: %.1f\n", msg.pid, msg.ocena_B);
             }
 
             sem_v(sem_komisja_B_id, SEM_EGZAMIN_B); // Zwolnienie miejsca do komisji po zakończeniu egzaminu
 
-            printf("Student %d zwalnia miejsce na egzamin teoretyczny.\n", dane->pid);
+            ///printf("Student %d zwalnia miejsce na egzamin teoretyczny.\n", dane->pid);
             sem_v(sem_komisja_B_id, SEM_EGZAMIN_TEORETYCZNY);  // Zwolnienie miejsca do egzaminu po zakończeniu egzaminu
         } else {
-            printf("Student o PID %d nie zdał egzaminu praktycznego i wraca do domu.\n", dane->pid);
+            ///printf("Student o PID %d nie zdał egzaminu praktycznego i wraca do domu.\n", dane->pid);
         }
         
     } else {
@@ -174,13 +195,14 @@ int main() {
     key_t key_komisja_A = ftok(".", 'A');
     key_t key_komisja_B = ftok(".", 'B');
     key_t key_msg = ftok(".", 'M');
+    key_t key_dziekan = ftok(".", 'D');
     if (key == -1 || key_komisja_A == -1 || key_komisja_B == -1 || key_msg == -1) {
         perror("Błąd tworzenia klucza!");
         cleanup();
         exit(EXIT_FAILURE);
     }
 
-    shm_id = shmget(key, SEM_SIZE, IPC_CREAT | 0666);
+    shm_id = shmget(key, sizeof(int), IPC_CREAT | 0666);
     shm_komisja_id = shmget(key_komisja_A, sizeof(Student_info), IPC_CREAT | 0666);
     if (shm_id == -1 || shm_komisja_id == -1) {
         perror("Błąd tworzenia segmentu pamięci dzielonej!");
@@ -197,6 +219,7 @@ int main() {
     }
 
     msgid = msgget(key_msg, 0666 | IPC_CREAT);
+    msg_dziekan = msgget(key_dziekan, 0666 | IPC_CREAT);
     if (msgid == -1) {
         perror("Błąd tworzenia kolejki komunikatów!");
         cleanup();
@@ -228,6 +251,7 @@ int main() {
     // Tworzenie procesów dla studentów
     for (int i = 0; i < liczba_kierunkow; i++) {
         for (int j = 1; j <= liczba_studentow[i]; j++) {
+            //sleep(1);
             //usleep(rand() % 50000);
             pid_t pid = fork();  // Tworzenie procesu dla studenta
             if (pid == 0) {  // Jeśli to proces studenta
@@ -262,7 +286,7 @@ int main() {
         //printf("Zakonczyl sie proces potomny o PID=%d i statusie = %d\n", w, x);
     }
 
-    cleanup();
+    //cleanup();
 
     //printf("\nSymulacja zakończona.\n");
 
@@ -312,4 +336,9 @@ void cleanup() {
     if (semctl(sem_id, 0, IPC_RMID) == -1) {
         perror("Błąd usuwania semaforów Student-Dziekan!");
     }
+}
+
+void handle_signal(int sig) {
+    printf("Otrzymano sygnał %d. Student kończy pracę.\n", sig);
+    exit(0);  // Zakończenie procesu studenta
 }
