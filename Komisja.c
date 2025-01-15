@@ -22,6 +22,7 @@
 #define SEM_KOMISJA_B 1
 #define SEM_EGZAMIN_B 2
 #define STUDENT_TO_COMMISSION_B 2
+#define COMMISSION_TO_DEAN 4
 
 int sem_komisja_A_id, sem_komisja_B_id, shm_komisja_id, msgid, w, x;
 float oceny[] = {5.0, 4.5, 4.0, 3.5, 3.0, 2.0};
@@ -40,6 +41,7 @@ typedef struct {
     int ile_kierunek;   // Liczba studentów na ogłoszonym kierunku
     int ile_studentow;   // Liczba studentów z pozytywną oceną po egzaminie praktycznym
     int komisja_A_koniec;   // Flaga informująca o końcu pracy komisji A
+    int komisja_B_koniec;
 } Student_info;
 
 Student_info *shared_info;
@@ -58,7 +60,7 @@ void* komisja_A() {
         ile_studentow = shared_info->ile_kierunek;
         sem_v(sem_komisja_A_id, SEM_ILE_STUDENTOW_1);
 
-        printf("Liczba studentów na kierunku: %d\n", ile_studentow);
+        //printf("Liczba studentów na kierunku: %d\n", ile_studentow);
 
         sem_p(sem_komisja_A_id, SEM_KOMISJA_A); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
 
@@ -80,13 +82,21 @@ void* komisja_A() {
 
         // Przypisanie losowej oceny do PIDu studenta
         msg.ocena_A = oceny[rand() % LICZBA_OCEN];
+        msg.msg_type = COMMISSION_TO_DEAN;
+
+        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+            perror("msgsnd");
+        } else {
+            printf("Komisja A wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_A, msg.pid);
+        }
+
         msg.msg_type = msg.pid;
 
         // Wysyłanie oceny za odpowiedź do studenta
         if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
         } else {
-            printf("Komisja wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_A, msg.pid);
+            //printf("Komisja wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_A, msg.pid);
         }
 
         if(msg.ocena_A >= 3.0){
@@ -95,7 +105,7 @@ void* komisja_A() {
         }
 
         ile_ocen++;
-        printf("Aktualna liczba studentów z oceną A: %d\n", ile_ocen);
+        //printf("Aktualna liczba studentów z oceną A: %d\n", ile_ocen);
 
         if (ile_ocen == ile_studentow) {
             printf("!!! Liczba studentów z pozytywną oceną: %d !!!\n", ile_zdane);
@@ -135,13 +145,21 @@ void* komisja_B() {
 
         // Przypisanie losowej oceny do PIDu studenta
         msg.ocena_B = oceny[rand() % LICZBA_OCEN];
+        msg.msg_type = COMMISSION_TO_DEAN;
+
+        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+            perror("msgsnd");
+        } else {
+            printf("Komisja B wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_B, msg.pid);
+        }
+
         msg.msg_type = msg.pid;
 
         // Wysyłanie oceny za odpowiedź do studenta
         if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
         } else {
-            printf("Komisja B wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_B, msg.pid);
+            //printf("Komisja B wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_B, msg.pid);
         }
 
         ile_ocen++;
@@ -151,6 +169,7 @@ void* komisja_B() {
         czy_koniec = shared_info->komisja_A_koniec;
 
         if (ile_studentow == ile_ocen && czy_koniec == 1) {
+            shared_info->komisja_B_koniec = 1;
             printf("Komisja B: Wszyscy studenci z kierunku podeszli do egzaminu teoretycznego. Komisja kończy pracę.\n");
             break;  // Zakończenie pracy komisji
         }
@@ -230,7 +249,7 @@ int main() {
 
     // Tworzenie semafora
     sem_komisja_A_id = semget(key_komisja_A, 5, IPC_CREAT | 0666);
-    sem_komisja_B_id = semget(key_komisja_B, 3, IPC_CREAT | 0666);
+    sem_komisja_B_id = semget(key_komisja_B, 4, IPC_CREAT | 0666);
     if (sem_komisja_A_id == -1 || sem_komisja_B_id == -1) {
         perror("Błąd tworzenia semaforów!");
         exit(EXIT_FAILURE);

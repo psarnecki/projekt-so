@@ -27,6 +27,7 @@
 #define SEM_KOMISJA_B 1
 #define SEM_EGZAMIN_B 2
 #define STUDENT_TO_COMMISSION_B 2
+#define SEM_ILE_STUDENTOW 2
 
 int sem_id, sem_komisja_A_id, sem_komisja_B_id, shm_id, shm_komisja_id, msgid, msg_dziekan, w, x;
 int ogloszony_kierunek = 0;
@@ -47,6 +48,7 @@ typedef struct {
     int ile_kierunek;   // Liczba studentów na ogłoszonym kierunku
     int ile_studentow;   // Liczba studentów z pozytywną oceną po egzaminie praktycznym
     int komisja_A_koniec;   // Flaga informująca o końcu pracy komisji A
+    int komisja_B_koniec;
 } Student_info;
 
 Student_info *shared_info;
@@ -83,6 +85,8 @@ void symuluj_przybycie(Student* dane) {
         ile_studentow = liczba_studentow[ogloszony_kierunek - 1];
         shared_info->ile_kierunek = ile_studentow;
 
+        sem_v(sem_id, SEM_ILE_STUDENTOW);
+
         struct message msg;
         msg.msg_type = STUDENT_TO_DEAN;
         msg.pid = dane->pid; // PID studenta
@@ -93,23 +97,14 @@ void symuluj_przybycie(Student* dane) {
             exit(1);
         }
 
-        // trzeba tutaj dodac semafor otwierajcy zapisywanie pidow do dziekana
-
-        ile_studentow = 0; // to w przyszlosci trzeba usunac jak bedzie semafor i zmienic warunek z przekazaniem informacji z iloscia studentow do komisji
-
-        // Przekazanie informacji z ilością studentów do programu Komisja
-        if(ile_studentow == 0){
-            ile_studentow = liczba_studentow[ogloszony_kierunek - 1];
-            sem_p(sem_komisja_A_id, SEM_ILE_STUDENTOW_1);
-            shared_info->ile_kierunek = ile_studentow;
-            sem_v(sem_komisja_A_id, SEM_ILE_STUDENTOW_2);
-        }
+        sem_p(sem_komisja_A_id, SEM_ILE_STUDENTOW_1);
+        shared_info->ile_kierunek = ile_studentow;
+        sem_v(sem_komisja_A_id, SEM_ILE_STUDENTOW_2);
 
         sem_p(sem_komisja_A_id, SEM_EGZAMIN_PRAKTYCZNY); // Czekanie na dostępne miejsce do egzaminu
         ///printf("Student %d z kierunku %d wchodzi na egzamin praktyczny.\n", dane->pid, dane->kierunek);
 
         sem_p(sem_komisja_A_id, SEM_EGZAMIN_A);  // Sprawdzenie czy można podejść do komisji
-
 
         msg.msg_type = STUDENT_TO_COMMISSION_A;
         msg.pid = dane->pid; // PID studenta
@@ -226,9 +221,9 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    sem_id = semget(key, 2, IPC_CREAT | 0666);
+    sem_id = semget(key, 3, IPC_CREAT | 0666);
     sem_komisja_A_id = semget(key_komisja_A, 5, IPC_CREAT | 0666);
-    sem_komisja_B_id = semget(key_komisja_B, 3, IPC_CREAT | 0666);
+    sem_komisja_B_id = semget(key_komisja_B, 4, IPC_CREAT | 0666);
     if (sem_id == -1 || sem_komisja_A_id == -1 || sem_komisja_B_id == -1) {
         perror("Błąd tworzenia semaforów!");
         cleanup();
