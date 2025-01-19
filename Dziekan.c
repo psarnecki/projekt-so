@@ -147,7 +147,7 @@ int main() {
     printf("Dziekan ogłasza: Kierunek %d pisze egzamin.\n", kierunek);
 
     sem_p(sem_id, SEM_DZIEKAN);
-    shared_mem = kierunek; // Zapisanie numeru kierunku do pamięci współdzielonej
+    *shared_mem = kierunek; // Zapisanie numeru kierunku do pamięci współdzielonej
     sem_v(sem_id, SEM_STUDENT);
 
     sem_p(sem_id, SEM_ILE_STUDENTOW);

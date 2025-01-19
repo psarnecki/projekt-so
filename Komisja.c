@@ -60,7 +60,6 @@ void* czlonek_komisji() {}
 // Funkcja procesu komisji
 void* komisja_A() {
     printf("Komisja A rozpoczęła przyjmować studentów!\n");
-    //signal(SIGUSR1, handle_signal);
 
     int ile_studentow, ile_ocen = 0, ile_zdane = 0;
 
@@ -98,7 +97,11 @@ void* komisja_A() {
             // Tutaj ewentualnie można dodać semafor który będzie odbierał informacje o gotowych pytaniach 
 
             // Przypisanie losowej oceny do PIDu studenta
-            msg.ocena_A = oceny[rand() % LICZBA_OCEN];
+            if (rand() % 100 < 95) {  // 95% szans na ocenę pozytywną
+                msg.ocena_A = oceny[rand() % (LICZBA_OCEN - 1)];  // Oceny 5.0, 4.5, 4.0, 3.5, 3.0
+            } else {
+                msg.ocena_A = oceny[5];  // 5% szans na ocenę 2.0
+            }
 
             printf("Komisja A wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_A, msg.pid);
         }
@@ -139,10 +142,10 @@ void* komisja_A() {
 
 void* komisja_B() {
     printf("Komisja B rozpoczęła przyjmować studentów!\n");
-    //signal(SIGUSR1, handle_signal);
 
     int ile_studentow, ile_ocen = 0, czy_koniec = 0;
 
+    sleep(1); // Dodanie opóźnienia, aby zapewnić różne wartości czasu dla seedów
     srand(time(NULL) ^ (unsigned int)pthread_self());
     
     while (1) {
@@ -165,7 +168,12 @@ void* komisja_B() {
         // Tutaj ewentualnie można dodać semafor który będzie odbierał informacje o gotowych pytaniach 
 
         // Przypisanie losowej oceny do PIDu studenta
-        msg.ocena_B = oceny[rand() % LICZBA_OCEN];
+        if (rand() % 100 < 95) {  // 95% szans na ocenę pozytywną
+            msg.ocena_B = oceny[rand() % (LICZBA_OCEN - 1)];  // Oceny 5.0, 4.5, 4.0, 3.5, 3.0
+        } else {
+            msg.ocena_B = oceny[5];  // 5% szans na ocenę 2.0
+        }
+
         msg.msg_type = COMMISSION_TO_DEAN;
 
         if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
@@ -235,8 +243,6 @@ void stworz_komisja_B() {
 void cleanup();
 
 int main() {
-    //srand(time(NULL));  // Inicjalizacja generatora liczb losowych
-
     key_t key_komisja_A = ftok(".", 'A');
     key_t key_komisja_B = ftok(".", 'B');
     key_t key_msg = ftok(".", 'M'); // Tworzenie klucza
