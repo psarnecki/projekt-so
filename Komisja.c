@@ -13,27 +13,25 @@
 #include <errno.h>
 
 #define LICZBA_OCEN 6
-#define SEM_EGZAMIN_PRAKTYCZNY 0
-#define SEM_KOMISJA_A 1
-#define SEM_EGZAMIN_A 2
-#define SEM_ILE_STUDENTOW_1 3
-#define SEM_ILE_STUDENTOW_2 4
 
-#define SEM_EGZAMIN_TEORETYCZNY 0
-#define SEM_KOMISJA_B 1
-#define SEM_EGZAMIN_B 2
+#define SEM_EGZAMIN_PRAKTYCZNY 2
+#define SEM_KOMISJA_A 3
+#define SEM_EGZAMIN_A 4
+#define SEM_ILE_STUDENTOW_1 5
+#define SEM_ILE_STUDENTOW_2 6
+
+#define SEM_EGZAMIN_TEORETYCZNY 7
+#define SEM_KOMISJA_B 8
+#define SEM_EGZAMIN_B 9
 
 #define STUDENT_TO_COMMISSION_A 1
 #define STUDENT_TO_COMMISSION_B 2
 #define COMMISSION_TO_DEAN 4
 #define COMMISSION_PID 5
 
-int sem_komisja_A_id, sem_komisja_B_id, shm_komisja_id, msgid, w, x, msg_dziekan;
+int shm_info_id, msg_id, msg_dean_id, sem_id, w, x;
 float oceny[] = {5.0, 4.5, 4.0, 3.5, 3.0, 2.0};
-int commision_pids[2];
-
-void sem_p(int sem_id, int sem_num);
-void sem_v(int sem_id, int sem_num);
+int commission_pids[2];
 
 struct message {
     long msg_type;  // Typ komunikatu
@@ -52,7 +50,10 @@ typedef struct {
 
 Student_info *shared_info;
 
+void sem_p(int sem_id, int sem_num);
+void sem_v(int sem_id, int sem_num);
 void handle_signal(int sig);
+void cleanup();
 
 // Funkcja wątku: symulacja pracy członka komisji
 void* czlonek_komisji() {}
@@ -66,25 +67,25 @@ void* komisja_A() {
     srand(time(NULL) ^ (unsigned int)pthread_self());
 
     while (1) {
-        sem_p(sem_komisja_A_id, SEM_ILE_STUDENTOW_2);
+        sem_p(sem_id, SEM_ILE_STUDENTOW_2);
         ile_studentow = shared_info->ile_kierunek;
-        sem_v(sem_komisja_A_id, SEM_ILE_STUDENTOW_1);
+        sem_v(sem_id, SEM_ILE_STUDENTOW_1);
 
         //printf("Liczba studentów na kierunku: %d\n", ile_studentow);
 
-        sem_p(sem_komisja_A_id, SEM_KOMISJA_A); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
+        sem_p(sem_id, SEM_KOMISJA_A); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
 
         struct message msg;
 
         // Odbieranie PIDu studenta
-        if (msgrcv(msgid, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_COMMISSION_A, 0) == -1) {
+        if (msgrcv(msg_id, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_COMMISSION_A, 0) == -1) {
             perror("msgrcv Komisja A");
             continue;
         } else {
             //printf("Odebrałem pid studetna %d\n", msg.pid);
         }
 
-        if(msg.zaliczenie == 1){
+        if (msg.zaliczenie == 1) {
             msg.ocena_A = oceny[rand() % (LICZBA_OCEN - 1)];
             msg.msg_type = COMMISSION_TO_DEAN;
 
@@ -107,20 +108,22 @@ void* komisja_A() {
         }
 
         msg.msg_type = COMMISSION_TO_DEAN;
-        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+        if (msgsnd(msg_id, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
+            exit(EXIT_FAILURE);
         }
 
         msg.msg_type = msg.pid;
 
         // Wysyłanie oceny za odpowiedź do studenta
-        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+        if (msgsnd(msg_id, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
+            exit(EXIT_FAILURE);
         } else {
             //printf("Komisja wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_A, msg.pid);
         }
 
-        if(msg.ocena_A >= 3.0){
+        if (msg.ocena_A >= 3.0) {
             ile_zdane++;
             //printf("Aktualna liczba studentów z pozytywną oceną: %d\n", ile_zdane);
         }
@@ -149,12 +152,12 @@ void* komisja_B() {
     srand(time(NULL) ^ (unsigned int)pthread_self());
     
     while (1) {
-        sem_p(sem_komisja_B_id, SEM_KOMISJA_B); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
+        sem_p(sem_id, SEM_KOMISJA_B); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
 
         struct message msg;
 
         // Odbieranie PIDu studenta
-        if (msgrcv(msgid, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_COMMISSION_B, 0) == -1) {
+        if (msgrcv(msg_id, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_COMMISSION_B, 0) == -1) {
             perror("msgrcv Komisja B");
             continue;
         } else {
@@ -176,8 +179,9 @@ void* komisja_B() {
 
         msg.msg_type = COMMISSION_TO_DEAN;
 
-        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+        if (msgsnd(msg_id, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
+            exit(EXIT_FAILURE);
         } else {
             printf("Komisja B wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_B, msg.pid);
         }
@@ -185,8 +189,9 @@ void* komisja_B() {
         msg.msg_type = msg.pid;
 
         // Wysyłanie oceny za odpowiedź do studenta
-        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+        if (msgsnd(msg_id, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
+            exit(EXIT_FAILURE);
         } else {
             //printf("Komisja B wystawiła ocenę: %.1f dla PID: %d\n", msg.ocena_B, msg.pid);
         }
@@ -240,59 +245,61 @@ void stworz_komisja_B() {
     //printf("Komisja B zakończyła swoją pracę.\n");
 }
 
-void cleanup();
-
 int main() {
-    key_t key_komisja_A = ftok(".", 'A');
-    key_t key_komisja_B = ftok(".", 'B');
-    key_t key_msg = ftok(".", 'M'); // Tworzenie klucza
-    key_t key_dziekan = ftok(".", 'D');
+    //srand(time(NULL));  // Inicjalizacja generatora liczb losowych
 
-    if (key_komisja_A == -1 || key_komisja_B == -1|| key_msg == -1) {
+    key_t key = ftok(".", 'S');
+    key_t key_info = ftok(".", 'I');
+    key_t key_msg = ftok(".", 'M');
+    key_t key_dean_msg = ftok(".", 'D');
+    if (key == -1 || key_info == -1 || key_msg == -1 || key_dean_msg == -1) {
         perror("Błąd tworzenia klucza!");
         cleanup();
         exit(EXIT_FAILURE);
     }
 
-    shm_komisja_id = shmget(key_komisja_A, sizeof(Student_info), IPC_CREAT | 0666);
-    if (shm_komisja_id == -1) {
+    shm_info_id = shmget(key_info, sizeof(Student_info), IPC_CREAT | 0666);
+    if (shm_info_id == -1) {
         perror("Błąd tworzenia segmentu pamięci dzielonej!");
         cleanup();
         exit(EXIT_FAILURE);
     }
     
-    shared_info = (Student_info *)shmat(shm_komisja_id, NULL, 0);
+    shared_info = (Student_info *)shmat(shm_info_id, NULL, 0);
     if (shared_info == (Student_info *)(-1)) {
         perror("Błąd przyłączenia pamięci dzielonej!");
         cleanup();
         exit(EXIT_FAILURE);
     }
 
-    msg_dziekan = msgget(key_dziekan, 0666 | IPC_CREAT);
-    msgid = msgget(key_msg, 0666 | IPC_CREAT);
-    if (msgid == -1) {
+    msg_dean_id = msgget(key_dean_msg, 0666 | IPC_CREAT);
+    msg_id = msgget(key_msg, 0666 | IPC_CREAT);
+    if (msg_id == -1 || msg_dean_id == -1) {
         perror("Błąd tworzenia kolejki komunikatów!");
         cleanup();
         exit(EXIT_FAILURE);
     }
 
     // Tworzenie semafora
-    sem_komisja_A_id = semget(key_komisja_A, 5, IPC_CREAT | 0666);
-    sem_komisja_B_id = semget(key_komisja_B, 3, IPC_CREAT | 0666);
-    if (sem_komisja_A_id == -1 || sem_komisja_B_id == -1) {
+    sem_id = semget(key, 10, IPC_CREAT | 0666);
+    if (sem_id == -1) {
         perror("Błąd tworzenia semaforów!");
+        cleanup();
         exit(EXIT_FAILURE);
     }
 
-    semctl(sem_komisja_A_id, SEM_KOMISJA_A, SETVAL, 0); 
-    semctl(sem_komisja_A_id, SEM_EGZAMIN_A, SETVAL, 1);
-    semctl(sem_komisja_A_id, SEM_EGZAMIN_PRAKTYCZNY, SETVAL, 3);
-    semctl(sem_komisja_A_id, SEM_ILE_STUDENTOW_1, SETVAL, 1);
-    semctl(sem_komisja_A_id, SEM_ILE_STUDENTOW_2, SETVAL, 0);
+    // Komisja A
+    semctl(sem_id, SEM_EGZAMIN_PRAKTYCZNY, SETVAL, 3);
+    semctl(sem_id, SEM_KOMISJA_A, SETVAL, 0); 
+    semctl(sem_id, SEM_EGZAMIN_A, SETVAL, 1);
+    semctl(sem_id, SEM_ILE_STUDENTOW_1, SETVAL, 1);
+    semctl(sem_id, SEM_ILE_STUDENTOW_2, SETVAL, 0);
 
-    semctl(sem_komisja_B_id, SEM_KOMISJA_B, SETVAL, 0); 
-    semctl(sem_komisja_B_id, SEM_EGZAMIN_B, SETVAL, 1);
-    semctl(sem_komisja_B_id, SEM_EGZAMIN_TEORETYCZNY, SETVAL, 3);
+    //Komisja B
+    semctl(sem_id, SEM_EGZAMIN_TEORETYCZNY, SETVAL, 3);
+    semctl(sem_id, SEM_KOMISJA_B, SETVAL, 0); 
+    semctl(sem_id, SEM_EGZAMIN_B, SETVAL, 1);
+
 
     signal(SIGUSR1, handle_signal);
 
@@ -301,12 +308,13 @@ int main() {
 
     // Tworzenie procesu komisji A
     if (fork() == 0) {
-        commision_pids[0] = getpid();
-        //printf("Pid procesu %d to: %d.\n", 1, commision_pids[0]);
-        msg.pid = commision_pids[0]; // PID studenta
-        if (msgsnd(msg_dziekan, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+        commission_pids[0] = getpid();
+        //printf("Pid procesu %d to: %d.\n", 1, commission_pids[0]);
+        msg.pid = commission_pids[0]; // PID studenta
+        if (msgsnd(msg_dean_id, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
-            exit(1);
+            cleanup();
+            exit(EXIT_FAILURE);
         } else {
             //printf("Wysłano pid %d.\n", msg.pid);
         }
@@ -316,12 +324,13 @@ int main() {
 
     // Tworzenie procesu komisji B
     if (fork() == 0) {
-        commision_pids[1] = getpid();
-        //printf("Pid procesu %d to: %d.\n", 2, commision_pids[1]);
-        msg.pid = commision_pids[1]; // PID studenta
-        if (msgsnd(msg_dziekan, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
+        commission_pids[1] = getpid();
+        //printf("Pid procesu %d to: %d.\n", 2, commission_pids[1]);
+        msg.pid = commission_pids[1]; // PID studenta
+        if (msgsnd(msg_dean_id, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
             perror("msgsnd");
-            exit(1);
+            cleanup();
+            exit(EXIT_FAILURE);
         } else {
             //printf("Wysłano pid %d.\n", msg.pid);
         }
@@ -333,16 +342,13 @@ int main() {
         while ((w = wait(&x)) > 0) {
         if (w == -1) {
             perror("Błąd oczekiwania na zakończenie procesu potomnego!");
+            cleanup();
             exit(EXIT_FAILURE);
         }
         //printf("Zakonczyl sie proces potomny o PID=%d i statusie = %d\n", w, x);
     }
 
     //printf("Komisje zakończyły wystawianie ocen!.\n");
-
-    //cleanup();
-
-    //printf("\nSymulacja zakończona.\n");
 
     return 0;
 }
@@ -380,20 +386,20 @@ void sem_v(int sem_id, int sem_num) {
 }
 
 void cleanup() {
-    printf("Została wywołana funkcja czyszcząca! Komisja\n");
+    //printf("Została wywołana funkcja czyszcząca!\n");
     if (shared_info != NULL && shmdt(shared_info) == -1) {
         perror("Błąd odłączania pamięci dzielonej Student-Komisja!");
     }
-    if (shmctl(shm_komisja_id, IPC_RMID, NULL) == -1) {
+    if (shmctl(shm_info_id, IPC_RMID, NULL) == -1) {
         perror("Błąd usuwania segmentu pamięci dzielonej Student-Komisja!");
     }
-    if (semctl(sem_komisja_A_id, 0, IPC_RMID) == -1) {
+    if (semctl(sem_id, 0, IPC_RMID) == -1) {
         perror("Błąd usuwania semaforów Student-Komisja A!");
     }
-    if (semctl(sem_komisja_B_id, 0, IPC_RMID) == -1) {
-        perror("Błąd usuwania semaforów Student-Komisja B!");
+    if(msgctl(msg_id, IPC_RMID, NULL) == -1){
+        perror("Błąd usuwania kolejki komunikatów!");
     }
-    if(msgctl(msgid, IPC_RMID, NULL) == -1){
+    if(msgctl(msg_dean_id, IPC_RMID, NULL) == -1){
         perror("Błąd usuwania kolejki komunikatów!");
     }
 }
