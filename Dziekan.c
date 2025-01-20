@@ -4,10 +4,10 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/ipc.h>
-#include <sys/shm.h> // do obsługi pamięci dzielonej
-#include <sys/sem.h> // do obsługi semaforów
-#include <sys/msg.h> // Do obsługi kolejki komunikatów
-#include <signal.h> // do obsługi sygnałów
+#include <sys/shm.h> 
+#include <sys/sem.h> 
+#include <sys/msg.h> 
+#include <signal.h> 
 #include <errno.h>
 
 #define SEM_STUDENT 0
@@ -17,35 +17,34 @@
 #define COMMISSION_TO_DEAN 4
 #define COMMISSION_PID 5
 
-int shm_id, shm_info_id, msg_id, msg_dean_id, sem_id, ile_studentow = 0, czy_koniec = 0;
+int shm_id, shm_info_id, msg_id, msg_dean_id, sem_id, ile_studentow, czy_koniec = 0;
 int *shared_mem = NULL;
-int num_students = 0;  // Liczba aktywnych studentów
-int student_pids[160];  // Wskaźnik na dynamiczną tablicę przechowującą PID-y studentów
+int student_pids[160];
 int commission_pids[2];
 struct student_record *students = NULL;
 
 struct message {
-    long msg_type;  // Typ komunikatu
-    int pid;        // PID studenta
-    float ocena_A;      // Ocena (dla odpowiedzi)
+    long msg_type;
+    int pid;        
+    float ocena_A;      
     float ocena_B;
-    int zaliczenie;
+    int zaliczenie;   // Informacja o zaliczonej części praktycznej
 };
 
 typedef struct {
     int ile_kierunek;   // Liczba studentów na ogłoszonym kierunku
     int ile_studentow;   // Liczba studentów z pozytywną oceną po egzaminie praktycznym
     int komisja_A_koniec;   // Flaga informująca o końcu pracy komisji A
-    int komisja_B_koniec;
+    int komisja_B_koniec;   // Flaga informująca o końcu pracy komisji B
 } Student_info;
 
 Student_info *shared_info;
 
 struct student_record {
-    pid_t pid;        // PID studenta
-    float ocena_A;    // Ocena z komisji A (-1.0 oznacza brak oceny)
-    float ocena_B;    // Ocena z komisji B (-1.0 oznacza brak oceny)
-    float podsumowanie;
+    pid_t pid;        // ID studenta
+    float ocena_A;    // Ocena z komisji A (-1.0 = brak oceny)
+    float ocena_B;    // Ocena z komisji B (-1.0 = brak oceny)
+    float ocena_koncowa;    // Ocena końcowa wystawiona przez dziekana
 };
 
 void sem_p(int sem_id, int sem_num);
@@ -58,16 +57,16 @@ void wyswietl_oceny() {
     printf("| Nr  | PID       | Ocena A | Ocena B | Ocena Końcowa |\n");
     printf("=======================================================================================================\n");
 
-    int numer = 1; // Licznik numeracji
+    int num = 1;
+
     for (int i = 0; i < ile_studentow; i++) {
-        // Sprawdzenie czy student ma przypisaną przynajmniej jedną ocenę
         if (students[i].ocena_A != -1.0 || students[i].ocena_B != -1.0) {
             printf("| %-3d | %-9d | %-7.1f | %-7.1f | %-13.1f |\n",
-            numer++,
+            num++,
             students[i].pid,
-            (students[i].ocena_A == -1.0 ? 0.0 : students[i].ocena_A),
+            (students[i].ocena_A == -1.0 ? 0.0 : students[i].ocena_A), 
             (students[i].ocena_B == -1.0 ? 0.0 : students[i].ocena_B),
-            students[i].podsumowanie);
+            students[i].ocena_koncowa);
         }
     }
     printf("=======================================================================================================\n\n");
@@ -76,11 +75,11 @@ void wyswietl_oceny() {
 void handle_signal(int sig) {
     wyswietl_oceny();
     for(int i = 0; i < 2; i++) {
-        kill(commission_pids[i], SIGUSR1);
+        kill(commission_pids[i], SIGUSR1);  // Wysłanie sygnału do procesu komisji
     }
-    for (int i = 0; i < num_students; i++) {
+    for (int i = 0; i < ile_studentow; i++) {
         if (kill(student_pids[i], 0) == 0) {  // Sprawdzenie, czy proces istnieje
-            kill(student_pids[i], SIGUSR1);  // Wysyłanie sygnału do studenta
+            kill(student_pids[i], SIGUSR1);  // Wysłanie sygnału do procesu studenta
         }
     }
     cleanup();
@@ -88,7 +87,7 @@ void handle_signal(int sig) {
 }
 
 int main() {
-    srand(time(NULL)); // Inicjalizacja generatora liczb pseudolosowych
+    srand(time(NULL));
 
     key_t key = ftok(".", 'S');
     key_t key_info = ftok(".", 'I');
@@ -138,28 +137,30 @@ int main() {
 	signal(SIGTERM, handle_signal);
 
     int ile_kierunkow;
+
     while (1) {
-        ile_kierunkow = *shared_mem; // Odczytanie liczby kierunków
+        ile_kierunkow = *shared_mem; // Odczytanie informacji o liczbie kierunków
         if (ile_kierunkow != 0) {
-            //printf("Dziekan odczytuje ile jest kierunków: %d\n", ile_kierunkow);
-            break;  // Wyjście z pętli, jeśli liczba kierunków jest różna od 0
+            break;
         }
-        sleep(1); // 1 sekunda przerwy przed ponownym sprawdzeniem
+        sleep(1);
     }
 
-    int kierunek = rand() % ile_kierunkow + 1; // Kierunki od 1 do 10
+    int kierunek = rand() % ile_kierunkow + 1;
     printf("Dziekan ogłasza: Kierunek %d pisze egzamin.\n", kierunek);
-    *shared_mem = kierunek; // Zapisanie numeru kierunku do pamięci współdzielonej
+    *shared_mem = kierunek; // Zapisanie wybranego kierunku do pamięci współdzielonej
 
-    sem_v(sem_id, SEM_STUDENT);
+    sem_v(sem_id, SEM_STUDENT); // Możliwość odczytania ogłoszenia kierunku przez procesy studentów 
 
-    sem_p(sem_id, SEM_ILE_STUDENTOW); // Odbieranie PIDów studentów
+    sem_p(sem_id, SEM_ILE_STUDENTOW); // Rozpoczęcie odbierania PIDów studentów
 
-    int licznik = 0;
+    int num_commissions = 0, num_students = 0;
 
+    // Odbieranie PIDów procesów studentów i utworzenie z nich tablicy
     while (1) {
         ile_studentow = shared_info->ile_kierunek;
-        struct message msg;  
+        struct message msg;
+
         if (msgrcv(msg_dean_id, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_DEAN, 0) == -1) {
             perror("msgrcv Dziekan 1");
             cleanup();
@@ -167,24 +168,25 @@ int main() {
         } else {
             student_pids[num_students] = msg.pid;
             num_students++;
-            //printf("[%d] Student PID: %d. Na kierunku jest %d studentow.\n", num_students, msg.pid, ile_studentow);
-            if(num_students == ile_studentow){
+            if(num_students == ile_studentow) {
                 break;
             }
         }
     }
 
+    // Odbieranie PIDów procesów komisji i utworzenie z nich tablicy
     while (1) {
         struct message msg;
+        
         if (msgrcv(msg_dean_id, &msg, sizeof(msg) - sizeof(long), COMMISSION_PID, 0) == -1) {
             perror("msgrcv Dziekan 1");
             cleanup();
             exit(EXIT_FAILURE);
         } else {
-            commission_pids[licznik] = msg.pid;
-            licznik++;
-            //printf("[%d] Komisja PID: %d.\n", licznik, msg.pid, ile_studentow);
-            if(licznik == 2){
+            commission_pids[num_commissions] = msg.pid;
+            num_commissions++;
+
+            if(num_commissions == 2) {
                 break;
             }
         }
@@ -193,15 +195,15 @@ int main() {
     students = malloc((ile_studentow) * sizeof(struct student_record));
     struct message msg;
     
-    // Inicjalizacja struktury studentów (przykład)
+    // Inicjalizacja struktury studentów
     for (int i = 0; i < ile_studentow; i++) {
-        students[i].pid = student_pids[i];  // Student PID
-        students[i].ocena_A = -1.0;  // Brak oceny A
-        students[i].ocena_B = -1.0;  // Brak oceny B
+        students[i].pid = student_pids[i]; 
+        students[i].ocena_A = -1.0;  
+        students[i].ocena_B = -1.0;  
     }
 
     while (1) {
-        // Odbieranie wiadomości z kolejki komunikatów
+        // Odbieranie ocen wystawionych przez komisje
         if (msgrcv(msg_id, &msg, sizeof(msg) - sizeof(long), COMMISSION_TO_DEAN, 0) == -1) {
             if (errno == EINTR) {
                 continue;  // Ignoruj przerwanie i ponów próbę
@@ -210,41 +212,37 @@ int main() {
                 cleanup();
                 exit(EXIT_FAILURE);
             }
-        } else {
-            //printf("Odebrałem wiadomość z PID %d i oceną %.1f, %.1f.\n", msg.pid, msg.ocena_A, msg.ocena_B);
         }
 
-        // Wyszukiwanie studenta po pid
+        // Wyszukiwanie studenta po odebranym PID
         for (int i = 0; i < ile_studentow; i++) {
             if (students[i].pid == msg.pid) {
                 if (students[i].ocena_A == -1.0) {
                     students[i].ocena_A = msg.ocena_A;  // Przypisanie oceny A
-                    //printf("Dziekan: Ocena A dla studenta PID %d: %.1f\n", students[i].pid, students[i].ocena_A);
-                } else if (students[i].ocena_A != -1.0 && students[i].ocena_B == -1.0) {
+                } else if (students[i].ocena_A != -1.0 && students[i].ocena_B == -1.0) { // Dla wystawionej oceny z egzaminu A
                     students[i].ocena_B = msg.ocena_B;  // Przypisanie oceny B
-                    //printf("Dziekan: Ocena B dla studenta PID %d: %.1f\n", students[i].pid, students[i].ocena_B);
                 }
 
+                // Przypisywanie ocen i wystawianie oceny końcowej w zależności od odebranych ocen cząstkowych 
                 if (students[i].ocena_A == 2.0) {
                     students[i].ocena_B = 0.0;
-                    students[i].podsumowanie = 2.0;
-                    printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", students[i].pid, students[i].ocena_A, students[i].ocena_B, students[i].podsumowanie);
+                    students[i].ocena_koncowa = 2.0;
+                    printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", students[i].pid, students[i].ocena_A, students[i].ocena_B, students[i].ocena_koncowa);
                     break;
                 } else if (students[i].ocena_A != -1.0 && students[i].ocena_B != -1.0) {
                     if (students[i].ocena_B == 2.0) {
-                        students[i].podsumowanie = 2.0;
-                        printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", students[i].pid, students[i].ocena_A, students[i].ocena_B, students[i].podsumowanie);
+                        students[i].ocena_koncowa = 2.0;
+                        printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", students[i].pid, students[i].ocena_A, students[i].ocena_B, students[i].ocena_koncowa);
                         break;
                     } else {
-                        students[i].podsumowanie = (students[i].ocena_A + students[i].ocena_B) / 2.0;
-                        printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", students[i].pid, students[i].ocena_A, students[i].ocena_B, students[i].podsumowanie);
+                        students[i].ocena_koncowa = (students[i].ocena_A + students[i].ocena_B) / 2.0;
+                        printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", students[i].pid, students[i].ocena_A, students[i].ocena_B, students[i].ocena_koncowa);
                         break;
                     }
                 }
             }
         }
-
-        czy_koniec = shared_info->komisja_B_koniec;
+        czy_koniec = shared_info->komisja_B_koniec; // Informacja od komisji B o zakończeniu oceniania wszystkich studentów
 
         if(czy_koniec == 1){
             break;
@@ -253,8 +251,6 @@ int main() {
 
     wyswietl_oceny();
 
-    //printf("Dziekan zakończył działanie.\n");
-
     printf("\nSymulacja zakończona.\n");
 
     free(students);
@@ -262,7 +258,6 @@ int main() {
     return 0;
 }
 
-// Zmniejszenie wartości semafora - zamknięcie
 void sem_p(int sem_id, int sem_num) {
     int zmien_sem;
     struct sembuf bufor_sem;
@@ -274,19 +269,18 @@ void sem_p(int sem_id, int sem_num) {
         if(errno == EINTR){
         sem_p(sem_id, sem_num);
         } else {
-        perror("(Student) Nie mogłem zamknąć semafora.\n");
+        perror("Nie mogłem zamknąć semafora.\n");
         exit(EXIT_FAILURE);
         }
     }
 }
 
-// Zwiększenie wartości semafora - otwarcie
 void sem_v(int sem_id, int sem_num) {
 	  int zmien_sem;
     struct sembuf bufor_sem;
     bufor_sem.sem_num = sem_num;
     bufor_sem.sem_op = 1;
-    bufor_sem.sem_flg = 0; // flaga 0 (zamiast SEM_UNDO) żeby po wyczerpaniu short inta nie wyrzuciło błędu
+    bufor_sem.sem_flg = 0;
     zmien_sem=semop(sem_id, &bufor_sem, 1);
     if (zmien_sem == -1){
         perror("Nie mogłem otworzyć semafora.\n");
@@ -295,26 +289,25 @@ void sem_v(int sem_id, int sem_num) {
 }
 
 void cleanup() {
-    //printf("Została wywołana funkcja czyszcząca!\n");
     if (shared_mem != NULL && shmdt(shared_mem) == -1) {
-        perror("Błąd odłączania pamięci dzielonej Student-Dziekan!");
+        perror("Błąd odłączania pamięci dzielonej shared_mem!");
     }
     if (shared_info != NULL && shmdt(shared_info) == -1) {
-        perror("Błąd odłączania pamięci dzielonej Student-Komisja!");
+        perror("Błąd odłączania pamięci dzielonej shared_info!");
     }
     if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
-        perror("Błąd usuwania segmentu pamięci dzielonej Student-Komisja!");
+        perror("Błąd usuwania segmentu pamięci dzielonej shm_id!");
     }
     if (shmctl(shm_info_id, IPC_RMID, NULL) == -1) {
-        perror("Błąd usuwania segmentu pamięci dzielonej Student-Komisja!");
+        perror("Błąd usuwania segmentu pamięci dzielonej shm_info_id!");
     }
     if (semctl(sem_id, 0, IPC_RMID) == -1) {
-        perror("Błąd usuwania semaforów Student-Komisja A!");
+        perror("Błąd usuwania semaforów sem_id!");
     }
     if(msgctl(msg_id, IPC_RMID, NULL) == -1){
-        perror("Błąd usuwania kolejki komunikatów!");
+        perror("Błąd usuwania kolejki komunikatów msg_id!");
     }
     if(msgctl(msg_dean_id, IPC_RMID, NULL) == -1){
-        perror("Błąd usuwania kolejki komunikatów!");
+        perror("Błąd usuwania kolejki komunikatów msg_dean_id!");
     }
 }
