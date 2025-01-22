@@ -17,16 +17,15 @@
 
 #define SEM_STUDENT 0
 #define SEM_TOTAL_STUDENTS 1
+#define SEM_ACTIVE_PROCESS 8
 
 #define SEM_PRACTICAL_EXAM 2
 #define SEM_COMMISSION_A 3
 #define SEM_EXAM_A 4
-#define SEM_TOTAL_STUDENTS_WRITE 5
-#define SEM_TOTAL_STUDENTS_READ 6
 
-#define SEM_THEORETICAL_EXAM 7
-#define SEM_COMMISSION_B 8
-#define SEM_EXAM_B 9
+#define SEM_THEORETICAL_EXAM 5
+#define SEM_COMMISSION_B 6
+#define SEM_EXAM_B 7
 
 #define STUDENT_TO_COMMISSION_A 1
 #define STUDENT_TO_COMMISSION_B 2
@@ -101,11 +100,6 @@ void simulate_student(Student* student_data) {
             exit(EXIT_FAILURE);
         }
 
-        // Informacja dla komisji A z ilością studentów na wybranym kierunku
-        sem_p(sem_id, SEM_TOTAL_STUDENTS_WRITE);
-        shared_data->total_in_major = total_students;
-        sem_v(sem_id, SEM_TOTAL_STUDENTS_READ);
-
         sem_p(sem_id, SEM_PRACTICAL_EXAM); // Zajęcie miejsca w komisji (3 miejsca)
 
         sem_p(sem_id, SEM_EXAM_A);  // Podejście studenta do komisji
@@ -123,6 +117,7 @@ void simulate_student(Student* student_data) {
         sem_v(sem_id, SEM_COMMISSION_A); // Uruchomienie komisji (symulacja oczekiwania na pytania)
 
         if(student_data->is_exam_passed == 1) {
+            //Odebranie pozytywnej oceny dla wcześniej zaliczonego egzaminu praktycznego
             if (msgrcv(msg_id, &msg, sizeof(msg) - sizeof(long), student_data->pid, 0) == -1) {
                 perror("Błąd odbierania komunikatu!\n");
                 cleanup();
@@ -193,7 +188,7 @@ void simulate_student(Student* student_data) {
 }
 
 int main() {
-    srand(time(NULL)); // Inicjalizacja generatora liczb pseudolosowych
+    srand(time(NULL));
 
     key_t key = ftok(".", 'S');
     key_t key_info = ftok(".", 'I');
@@ -205,8 +200,8 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    shm_id = shmget(key, sizeof(int), IPC_CREAT | 0666);
-    shm_data_id = shmget(key_info, sizeof(Exam_data), IPC_CREAT | 0666);
+    shm_id = shmget(key, sizeof(int), IPC_CREAT | 0600);
+    shm_data_id = shmget(key_info, sizeof(Exam_data), IPC_CREAT | 0600);
     if (shm_id == -1 || shm_data_id == -1) {
         perror("Błąd tworzenia segmentu pamięci dzielonej!\n");
         cleanup();
@@ -221,15 +216,15 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    msg_id = msgget(key_msg, 0666 | IPC_CREAT);
-    msg_dean_id = msgget(key_dean_msg, 0666 | IPC_CREAT);
+    msg_id = msgget(key_msg, 0600 | IPC_CREAT);
+    msg_dean_id = msgget(key_dean_msg, 0600 | IPC_CREAT);
     if (msg_id == -1 || msg_dean_id == -1) {
         perror("Błąd tworzenia kolejki komunikatów!\n");
         cleanup();
         exit(EXIT_FAILURE);
     }
 
-    sem_id = semget(key, 10, IPC_CREAT | 0666);
+    sem_id = semget(key, 9, IPC_CREAT | 0600);
     if (sem_id == -1) {
         perror("Błąd tworzenia semaforów!\n");
         cleanup();
@@ -254,7 +249,7 @@ int main() {
     for (int i = 0; i < num_majors; i++) {
         for (int j = 1; j <= num_students[i]; j++) {
             //sleep(1);
-            //usleep(rand() % 50000);
+            usleep(rand() % 50000);
             pid_t pid = fork();  
             if (pid == 0) {
                 srand(time(NULL) ^ getpid());
@@ -287,6 +282,8 @@ int main() {
         }
     }
 
+    sem_p(sem_id, SEM_ACTIVE_PROCESS);
+
     free(num_students);
     return 0;
 }
@@ -302,7 +299,7 @@ void sem_p(int sem_id, int sem_num) {
         if(errno == EINTR){
         sem_p(sem_id, sem_num);
         } else {
-        perror("Nie mogłem zamknąć semafora.\n");
+        perror("Błąd zamykania semafora.\n");
         exit(EXIT_FAILURE);
         }
     }
@@ -316,7 +313,7 @@ void sem_v(int sem_id, int sem_num) {
     bufor_sem.sem_flg = 0; 
     change_sem=semop(sem_id, &bufor_sem, 1);
     if (change_sem == -1){
-        perror("Nie mogłem otworzyć semafora.\n");
+        perror("Błąd otwierania semafora.\n");
         exit(EXIT_FAILURE);
     }
 }

@@ -12,6 +12,7 @@
 
 #define SEM_STUDENT 0
 #define SEM_TOTAL_STUDENTS 1
+#define SEM_ACTIVE_PROCESS 8
 
 #define STUDENT_TO_DEAN 3
 #define COMMISSION_TO_DEAN 4
@@ -73,7 +74,9 @@ void show_exam_results() {
 }
 
 void handle_signal(int sig) {
+    printf("\nDziekan nadał komunikat o ewakuacji!\n");
     show_exam_results();
+    
     for(int i = 0; i < 2; i++) {
         kill(commission_pids[i], SIGUSR1);  // Wysłanie sygnału do procesu komisji
     }
@@ -82,6 +85,17 @@ void handle_signal(int sig) {
             kill(student_pids[i], SIGUSR1);  // Wysłanie sygnału do procesu studenta
         }
     }
+    sem_p(sem_id, SEM_ACTIVE_PROCESS);
+
+    //oczekiwanie na zakończenie wszystkich programów
+    while (1) {
+        int active_processes = semctl(sem_id, SEM_ACTIVE_PROCESS, GETVAL);
+        if (active_processes == 0) {
+            break;
+        }
+        //sleep(1);
+    }
+
     cleanup();
     exit(0);
 }
@@ -99,8 +113,8 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    shm_id = shmget(key, sizeof(int), IPC_CREAT | 0666);
-    shm_data_id = shmget(key_info, sizeof(Exam_data), IPC_CREAT | 0666);
+    shm_id = shmget(key, sizeof(int), IPC_CREAT | 0600);
+    shm_data_id = shmget(key_info, sizeof(Exam_data), IPC_CREAT | 0600);
     if (shm_id == -1 || shm_data_id == -1) {
         perror("Błąd tworzenia segmentu pamięci dzielonej!\n");
         cleanup();
@@ -115,15 +129,15 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    msg_dean_id = msgget(key_dean_msg, 0666 | IPC_CREAT);
-    msg_id = msgget(key_msg, 0666 | IPC_CREAT);
+    msg_dean_id = msgget(key_dean_msg, 0600 | IPC_CREAT);
+    msg_id = msgget(key_msg, 0600 | IPC_CREAT);
     if (msg_id == -1 || msg_dean_id == -1) {
         perror("Błąd tworzenia kolejki komunikatów!\n");
         cleanup();
         exit(EXIT_FAILURE);
     }
 
-    sem_id = semget(key, 10, IPC_CREAT | 0666);
+    sem_id = semget(key, 9, IPC_CREAT | 0600);
     if (sem_id == -1) {
         perror("Błąd tworzenia semaforów!\n");
         cleanup();
@@ -132,6 +146,7 @@ int main() {
 
 	semctl(sem_id, SEM_STUDENT, SETVAL, 0);
     semctl(sem_id, SEM_TOTAL_STUDENTS, SETVAL, 0);
+    semctl(sem_id, SEM_ACTIVE_PROCESS, SETVAL, 3);
 
     // Obsługa sygnałów SIGUSR2 i SIGTERM
     signal(SIGUSR2, handle_signal);
@@ -157,24 +172,6 @@ int main() {
 
     int commission_count = 0, student_count = 0;
 
-    // Odbieranie PIDów procesów studentów i utworzenie z nich tablicy
-    while (1) {
-        total_students = shared_data->total_in_major;
-        struct message msg;
-
-        if (msgrcv(msg_dean_id, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_DEAN, 0) == -1) {
-            perror("Błąd odbierania komunikatu!\n");
-            cleanup();
-            exit(EXIT_FAILURE);
-        } else {
-            student_pids[student_count] = msg.pid;
-            student_count++;
-            if(student_count == total_students) {
-                break;
-            }
-        }
-    }
-
     // Odbieranie PIDów procesów komisji i utworzenie z nich tablicy
     while (1) {
         struct message msg;
@@ -192,6 +189,25 @@ int main() {
             }
         }
     }
+
+    // Odbieranie PIDów procesów studentów i utworzenie z nich tablicy
+    while (1) {
+        total_students = shared_data->total_in_major;
+        struct message msg;
+
+        if (msgrcv(msg_dean_id, &msg, sizeof(msg) - sizeof(long), STUDENT_TO_DEAN, 0) == -1) {
+            perror("Błąd odbierania komunikatu!\n");
+            cleanup();
+            exit(EXIT_FAILURE);
+        } else {
+            student_pids[student_count] = msg.pid;
+            student_count++;
+
+            if(student_count == total_students) {
+                break;
+            }
+        }
+    }
     
     student = malloc((total_students) * sizeof(struct student_record));
     struct message msg;
@@ -202,6 +218,8 @@ int main() {
         student[i].grade_A = -1.0;  
         student[i].grade_B = -1.0;  
     }
+
+    int grade_count = 0;
 
     while (1) {
         // Odbieranie ocen wystawionych przez komisje
@@ -214,7 +232,7 @@ int main() {
                 exit(EXIT_FAILURE);
             }
         }
-
+        
         // Wyszukiwanie studenta po odebranym PID
         for (int i = 0; i < total_students; i++) {
             if (student[i].pid == msg.pid) {
@@ -229,28 +247,49 @@ int main() {
                     student[i].grade_B = 0.0;
                     student[i].final_grade = 2.0;
                     printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
+                    grade_count++;
                     break;
                 } else if (student[i].grade_A != -1.0 && student[i].grade_B != -1.0) {
                     if (student[i].grade_B == 2.0) {
                         student[i].final_grade = 2.0;
                         printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
+                        grade_count++;
                         break;
                     } else {
                         student[i].final_grade = (student[i].grade_A + student[i].grade_B) / 2.0;
                         printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
+                        grade_count++;
                         break;
                     }
                 }
             }
         }
-        is_exam_end = shared_data->commission_B_done; // Informacja od komisji B o zakończeniu oceniania wszystkich studentów
 
-        if(is_exam_end == 1) {
+        if(grade_count == total_students) {
             break;
         }
     }
-    show_exam_results();
+    
+    // Odebranie informacji od komisji B o zakończeniu oceniania wszystkich studentów oraz wyświetlenie ocen
+    while(1) {
+        is_exam_end = shared_data->commission_B_done;
+        if(is_exam_end == 1){
+            show_exam_results();
+            break;
+        }
+    }
+    
+    sem_p(sem_id, SEM_ACTIVE_PROCESS);
 
+    //oczekiwanie na zakończenie wszystkich programów
+    while (1) {
+        int active_processes = semctl(sem_id, SEM_ACTIVE_PROCESS, GETVAL);
+        if (active_processes == 0) {
+            break;
+        }
+        sleep(1);
+    }
+ 
     printf("\nSymulacja zakończona.\n");
 
     free(student);
@@ -269,7 +308,7 @@ void sem_p(int sem_id, int sem_num) {
         if(errno == EINTR){
         sem_p(sem_id, sem_num);
         } else {
-        perror("Nie mogłem zamknąć semafora.\n");
+        perror("Błąd zamykania semafora.\n");
         exit(EXIT_FAILURE);
         }
     }
@@ -283,7 +322,7 @@ void sem_v(int sem_id, int sem_num) {
     bufor_sem.sem_flg = 0;
     change_sem=semop(sem_id, &bufor_sem, 1);
     if (change_sem == -1){
-        perror("Nie mogłem otworzyć semafora.\n");
+        perror("Błąd otwierania semafora.\n");
         exit(EXIT_FAILURE);
     }
 }

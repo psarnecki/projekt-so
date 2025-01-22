@@ -17,12 +17,12 @@
 #define SEM_PRACTICAL_EXAM 2
 #define SEM_COMMISSION_A 3
 #define SEM_EXAM_A 4
-#define SEM_TOTAL_STUDENTS_WRITE 5
-#define SEM_TOTAL_STUDENTS_READ 6
 
-#define SEM_THEORETICAL_EXAM 7
-#define SEM_COMMISSION_B 8
-#define SEM_EXAM_B 9
+#define SEM_THEORETICAL_EXAM 5
+#define SEM_COMMISSION_B 6
+#define SEM_EXAM_B 7
+
+#define SEM_ACTIVE_PROCESS 8
 
 #define STUDENT_TO_COMMISSION_A 1
 #define STUDENT_TO_COMMISSION_B 2
@@ -66,14 +66,11 @@ void* commission_A() {
 
     srand(time(NULL) ^ (unsigned int)pthread_self()); // Inicjalizacja liczb pseudolosowych o unikatowym seedzie
 
+    sem_p(sem_id, SEM_COMMISSION_A); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
+
+    total_students = shared_data->total_in_major; // Odczytanie ilości studentów na ogłoszonym kierunku
+
     while (1) {
-        // Odczytanie ilości studentów na ogłoszonym kierunku
-        sem_p(sem_id, SEM_TOTAL_STUDENTS_READ);
-        total_students = shared_data->total_in_major;
-        sem_v(sem_id, SEM_TOTAL_STUDENTS_WRITE);
-
-        sem_p(sem_id, SEM_COMMISSION_A); // Rozpoczęcie zadawania pytań oraz oceny odpowiedzi
-
         struct message msg;
 
         // Odbieranie PIDów procesów studentów
@@ -232,7 +229,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    shm_data_id = shmget(key_info, sizeof(Exam_data), IPC_CREAT | 0666);
+    shm_data_id = shmget(key_info, sizeof(Exam_data), IPC_CREAT | 0600);
     if (shm_data_id == -1) {
         perror("Błąd tworzenia segmentu pamięci dzielonej!\n");
         cleanup();
@@ -246,15 +243,15 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    msg_dean_id = msgget(key_dean_msg, 0666 | IPC_CREAT);
-    msg_id = msgget(key_msg, 0666 | IPC_CREAT);
+    msg_dean_id = msgget(key_dean_msg, 0600 | IPC_CREAT);
+    msg_id = msgget(key_msg, 0600 | IPC_CREAT);
     if (msg_id == -1 || msg_dean_id == -1) {
         perror("Błąd tworzenia kolejki komunikatów!\n");
         cleanup();
         exit(EXIT_FAILURE);
     }
 
-    sem_id = semget(key, 10, IPC_CREAT | 0666);
+    sem_id = semget(key, 9, IPC_CREAT | 0600);
     if (sem_id == -1) {
         perror("Błąd tworzenia semaforów!\n");
         cleanup();
@@ -265,8 +262,6 @@ int main() {
     semctl(sem_id, SEM_PRACTICAL_EXAM, SETVAL, 3);
     semctl(sem_id, SEM_COMMISSION_A, SETVAL, 0); 
     semctl(sem_id, SEM_EXAM_A, SETVAL, 1);
-    semctl(sem_id, SEM_TOTAL_STUDENTS_WRITE, SETVAL, 1);
-    semctl(sem_id, SEM_TOTAL_STUDENTS_READ, SETVAL, 0);
 
     // Przypisywanie wartości semaforów - Komisja B
     semctl(sem_id, SEM_THEORETICAL_EXAM, SETVAL, 3);
@@ -319,6 +314,8 @@ int main() {
         }
     }
 
+    sem_p(sem_id, SEM_ACTIVE_PROCESS);
+
     return 0;
 }
 
@@ -333,7 +330,7 @@ void sem_p(int sem_id, int sem_num) {
         if(errno == EINTR){
         sem_p(sem_id, sem_num);
         } else {
-        perror("Nie mogłem zamknąć semafora.\n");
+        perror("Błąd zamykania semafora.\n");
         exit(EXIT_FAILURE);
         }
     }
@@ -347,7 +344,7 @@ void sem_v(int sem_id, int sem_num) {
     bufor_sem.sem_flg = 0;
     change_sem=semop(sem_id, &bufor_sem, 1);
     if (change_sem == -1){
-        perror("Nie mogłem otworzyć semafora.\n");
+        perror("Błąd otwierania semafora.\n");
         exit(EXIT_FAILURE);
     }
 }
