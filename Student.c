@@ -36,7 +36,7 @@ int *shared_mem = NULL;
 int *num_students = NULL;
 
 struct message {
-    long msg_type;  
+    long msg_type;
     int pid;        
     float grade_A;      
     float grade_B;
@@ -237,7 +237,7 @@ int main() {
 
     num_students = (int *)malloc(num_majors * sizeof(int)); // Tworzenie tablicy przechowującej liczbe studentów na poszczególnych kierunkach
 
-    printf("\nLosowanie liczby studentów na kierunkach...\n");
+    printf("\033[38;5;214m\nLosowanie liczby studentów na kierunkach...\033[0m\n");
     for (int i = 0; i < num_majors; i++) {
         num_students[i] = rand() % (MAX_STUDENTS - MIN_STUDENTS + 1) + MIN_STUDENTS;
         printf("Kierunek %d: %d studentów\n", i + 1, num_students[i]);
@@ -249,7 +249,7 @@ int main() {
     for (int i = 0; i < num_majors; i++) {
         for (int j = 1; j <= num_students[i]; j++) {
             //sleep(1);
-            usleep(rand() % 50000);
+            //usleep(rand() % 50000);
             pid_t pid = fork();  
             if (pid == 0) {
                 srand(time(NULL) ^ getpid());
@@ -262,17 +262,12 @@ int main() {
 
                 simulate_student(student);
 
-                // Sprawdzenie czy proces jest procesem wybranego kierunku
-                if (i + 1 != announced_major) {
-                    free(student); 
-                    exit(0);  
-                } else {
-                    free(student);
-                    exit(0);
-                }
+                free(student);
+                exit(0);
             }
         }
     }
+
     // Czekanie na zakończenie wszystkich procesów potomnych studentów
     while ((wait_status = wait(&exit_status)) > 0) {
         if (wait_status == -1) {
@@ -282,7 +277,7 @@ int main() {
         }
     }
 
-    sem_p(sem_id, SEM_ACTIVE_PROCESS);
+    sem_p(sem_id, SEM_ACTIVE_PROCESS); // Informacja dla programu Dziekan o zakończonej pracy
 
     free(num_students);
     return 0;

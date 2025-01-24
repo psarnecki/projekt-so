@@ -52,6 +52,22 @@ void sem_p(int sem_id, int sem_num);
 void sem_v(int sem_id, int sem_num);
 void cleanup();
 
+float round_grade(float average) {
+    if (average > 4.5) {
+        return 5.0;
+    } else if (average > 4.0) {
+        return 4.5;
+    } else if (average > 3.5) {
+        return 4.0;
+    } else if (average > 3.0) {
+        return 3.5;
+    } else if (average > 2.0) {
+        return 3.0;
+    } else {
+        return 2.0;
+    }
+}
+
 void show_exam_results() {
     printf("\nLista studentów z przypisanymi ocenami, którzy wzięli udział w egzaminie:\n");
     printf("=======================================================================================================\n");
@@ -74,7 +90,7 @@ void show_exam_results() {
 }
 
 void handle_signal(int sig) {
-    printf("\nDziekan nadał komunikat o ewakuacji!\n");
+    printf("\033[31m\nDziekan nadał komunikat o ewakuacji!\033[0m\n");
     show_exam_results();
     
     for(int i = 0; i < 2; i++) {
@@ -93,7 +109,7 @@ void handle_signal(int sig) {
         if (active_processes == 0) {
             break;
         }
-        //sleep(1);
+        sleep(1);
     }
 
     cleanup();
@@ -163,7 +179,7 @@ int main() {
     }
 
     int announced_major = rand() % num_majors + 1;
-    printf("\nDziekan ogłasza: Kierunek %d pisze egzamin.\n", announced_major);
+    printf("\033[31m\nDziekan ogłasza: Kierunek %d pisze egzamin.\033[0m\n", announced_major);
     *shared_mem = announced_major; // Zapisanie wybranego kierunku do pamięci współdzielonej
 
     sem_v(sem_id, SEM_STUDENT); // Możliwość odczytania ogłoszenia kierunku przez procesy studentów 
@@ -246,18 +262,18 @@ int main() {
                 if (student[i].grade_A == 2.0) {
                     student[i].grade_B = 0.0;
                     student[i].final_grade = 2.0;
-                    printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
+                    printf("\033[35mStudent PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\033[0m\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
                     grade_count++;
                     break;
                 } else if (student[i].grade_A != -1.0 && student[i].grade_B != -1.0) {
                     if (student[i].grade_B == 2.0) {
                         student[i].final_grade = 2.0;
-                        printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
+                        printf("\033[35mStudent PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\033[0m\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
                         grade_count++;
                         break;
                     } else {
-                        student[i].final_grade = (student[i].grade_A + student[i].grade_B) / 2.0;
-                        printf("Student PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
+                        student[i].final_grade = round_grade((student[i].grade_A + student[i].grade_B) / 2.0);
+                        printf("\033[35mStudent PID: %d, Ocena A: %.1f, Ocena B: %.1f, Ocena końcowa: %.1f\033[0m\n", student[i].pid, student[i].grade_A, student[i].grade_B, student[i].final_grade);
                         grade_count++;
                         break;
                     }
@@ -281,7 +297,7 @@ int main() {
     
     sem_p(sem_id, SEM_ACTIVE_PROCESS);
 
-    //oczekiwanie na zakończenie wszystkich programów
+    // Oczekiwanie na zakończenie wszystkich programów
     while (1) {
         int active_processes = semctl(sem_id, SEM_ACTIVE_PROCESS, GETVAL);
         if (active_processes == 0) {

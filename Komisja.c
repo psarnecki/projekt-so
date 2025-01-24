@@ -13,6 +13,7 @@
 #include <errno.h>
 
 #define NUM_GRADES 6
+#define NUM_MEMBERS 3
 
 #define SEM_PRACTICAL_EXAM 2
 #define SEM_COMMISSION_A 3
@@ -32,6 +33,26 @@
 int shm_data_id, msg_id, msg_dean_id, sem_id, wait_status, exit_status;
 float grades[] = {5.0, 4.5, 4.0, 3.5, 3.0, 2.0};
 int commission_pids[2];
+
+pthread_mutex_t mutex_A = PTHREAD_MUTEX_INITIALIZER;            // Synchronizacja w komisji A
+pthread_cond_t cond_A = PTHREAD_COND_INITIALIZER;               // Synchronizacja oczekiwania na rozpoczęcie losowania pytań oraz oceny odpowiedzi 
+pthread_cond_t start_cond_A = PTHREAD_COND_INITIALIZER;         // Sygnał rozpoczęcia losowania pytań i oceny odpowiedzi w komisji A
+pthread_mutex_t ready_count_mutex_A = PTHREAD_MUTEX_INITIALIZER; // Mutex do synchronizacji liczby członków komisji A, którzy zakończyli swoje zadanie
+
+float member_scores_A[NUM_MEMBERS] = {0.0, 0.0, 0.0};
+int start_A = 0;
+int ready_count_A = 0;
+int members_end_A = 0;
+
+pthread_mutex_t mutex_B = PTHREAD_MUTEX_INITIALIZER;            // Synchronizacja w komisji B
+pthread_cond_t cond_B = PTHREAD_COND_INITIALIZER;               // Synchronizacja oczekiwania na rozpoczęcie losowania pytań oraz oceny odpowiedzi 
+pthread_cond_t start_cond_B = PTHREAD_COND_INITIALIZER;         // Sygnał rozpoczęcia losowania pytań i oceny odpowiedzi w komisji B
+pthread_mutex_t ready_count_mutex_B = PTHREAD_MUTEX_INITIALIZER; // Mutex do synchronizacji liczby członków komisji B, którzy zakończyli swoje zadanie
+
+float member_scores_B[NUM_MEMBERS] = {0.0, 0.0, 0.0};
+int start_B = 0;
+int ready_count_B = 0;  
+int members_end_B = 0; 
 
 struct message {
     long msg_type;
@@ -55,11 +76,24 @@ void sem_v(int sem_id, int sem_num);
 void handle_signal(int sig);
 void cleanup();
 
-// Funkcja wątku: symulacja pracy członka komisji
-void* commission_member() {}
+float round_grade(float average) {
+    if (average > 4.5) {
+        return 5.0;
+    } else if (average > 4.0) {
+        return 4.5;
+    } else if (average > 3.5) {
+        return 4.0;
+    } else if (average > 3.0) {
+        return 3.5;
+    } else if (average == 3.0) {
+        return 3.0;
+    } else {
+        return 2.0;
+    }
+}
 
-// Funkcja procesu przewodniczącego komisji
-void* commission_A() {
+// Funkcja wątku przewodniczącego komisji A
+void* chairman_A() {
     printf("Komisja A rozpoczęła przyjmować studentów!\n");
 
     int total_students, graded_students = 0, total_passed = 0;
@@ -83,18 +117,42 @@ void* commission_A() {
             msg.grade_A = grades[rand() % (NUM_GRADES - 1)]; // Losowanie z puli pozytywnych ocen
             msg.msg_type = COMMISSION_TO_DEAN;
 
-            printf("Student %d przekazuje informacje, że ma już zaliczony egzamin praktyczny na ocenę: %.1f\n", msg.pid, msg.grade_A);
+            printf("\033[32mStudent %d przekazuje informacje, że ma już zaliczony egzamin praktyczny na ocenę: %.1f\033[0m\n", msg.pid, msg.grade_A);
         } else { // Wystawienie oceny za egzamin praktyczny
-            sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
 
-            // Przypisanie losowej oceny do PIDu studenta
-            if (rand() % 100 < 95) {  // 95% szans na ocenę pozytywną
-                msg.grade_A = grades[rand() % (NUM_GRADES - 1)];  // Pula pozytywnych ocen
-            } else {
-                msg.grade_A = grades[5];  // 5% szans na ocenę 2.0
+            // Synchronizacja - czekanie na pozostałych dwóch członków komisji
+            pthread_mutex_lock(&mutex_A);
+            start_A = 1;  // Ustawienie flagi informującej, że można rozpocząć losowanie
+            pthread_cond_broadcast(&start_cond_A);  // Powiadomienie wszystkich pozostałych członków komisji, aby rozpoczęli pracę
+            pthread_mutex_unlock(&mutex_A);
+
+            sleep(rand() % 3 + 2); // Symulacja czasu na przygotowanie pytania
+
+            pthread_mutex_lock(&mutex_A);
+            while (ready_count_A < 2) {  // Oczekiwanie, aż obaj członkowie zakończą zadanie
+                pthread_cond_wait(&cond_A, &mutex_A);
             }
 
-            printf("Komisja A wystawiła ocenę: %.1f dla PID: %d\n", msg.grade_A, msg.pid);
+            if (rand() % 100 < 95) {  // 95% szans na ocenę pozytywną
+                member_scores_A[2] = grades[rand() % (NUM_GRADES - 1)];  // Pula pozytywnych ocen
+            } else {
+                member_scores_A[2] = grades[5];  // 5% szans na ocenę 2.0
+            }
+
+            pthread_mutex_unlock(&mutex_A);
+
+            if (member_scores_A[2] == 2.0) {  // Dla oceny 2.0 wystawionej przez przewodniczącego jest przypisywana ta ocena, aby zapewnić zdawalność na poziomie 5%
+                msg.grade_A = member_scores_A[2];
+            } else {
+                float total_score = 0.0;
+                for (int i = 0; i < 3; i++) {  // Suma ocen wszystkich członków komisji
+                    total_score += member_scores_A[i];
+                }
+                msg.grade_A = round_grade(total_score / 3.0); // Oblicznie średniej ocen i jej zaokrąglenie 
+            }
+
+            ready_count_A = 0;  // Reset licznika gotowości dla członków komisji
+            printf("\033[33mKomisja A wystawiła ocenę: %.1f dla PID: %d\033[0m\n", msg.grade_A, msg.pid);
         }
 
         // Wysyłanie oceny z egzaminu A do dziekana
@@ -111,14 +169,18 @@ void* commission_A() {
             exit(EXIT_FAILURE);
         }
 
-        if (msg.grade_A >= 3.0) { // Licznik pozytywnych ocen
+        if (msg.grade_A >= 3.0) { // Licznik wystawionych pozytywnych ocen
             total_passed++;
         }
 
         graded_students++;
 
         if (graded_students == total_students) {
-            printf("Komisja A: Wszyscy studenci z kierunku podeszli do egzaminu praktycznego. Komisja kończy wystawianie ocen.\n");
+            printf("\033[31mKomisja A: Wszyscy studenci z kierunku podeszli do egzaminu praktycznego. Komisja kończy wystawianie ocen.\033[0m\n");
+
+            pthread_mutex_lock(&mutex_A);
+            members_end_A = 1;  // Ustawienie flagi zakończenia pracy komisji
+            pthread_mutex_unlock(&mutex_A);
 
             shared_data->total_passed_practical = total_passed;
             shared_data->commission_A_done = 1;
@@ -128,7 +190,43 @@ void* commission_A() {
     pthread_exit(NULL);
 }
 
-void* commission_B() {
+// Funkcja wątku członka komisji A
+void* commission_member_A(void* arg) {
+    int member_id = *((int*)arg);
+
+    while (1) {
+        srand(time(NULL) ^ (unsigned int)pthread_self());
+
+        pthread_mutex_lock(&mutex_A);
+        if (members_end_A == 1) {
+            pthread_mutex_unlock(&mutex_A);
+            break;  // Zakończenie pracy wątku
+        }
+        pthread_mutex_unlock(&mutex_A);
+
+        // Oczekiwanie na sygnał od przewodniczącego, by rozpocząć losowanie pytania
+        pthread_mutex_lock(&mutex_A);
+        while (!start_A) {
+            pthread_cond_wait(&start_cond_A, &mutex_A);  
+        }
+        pthread_mutex_unlock(&mutex_A);
+
+        sleep(rand() % 3 + 2); // Symulacja czasu na przygotowanie pytania
+
+        member_scores_A[member_id] = grades[rand() % (NUM_GRADES)]; // Wystawienie oceny przez członka komisji
+
+        pthread_mutex_lock(&ready_count_mutex_A);
+        ready_count_A++; // Flaga informująca o zakończeniu zadania
+        pthread_mutex_unlock(&ready_count_mutex_A);
+
+        pthread_cond_signal(&cond_A); // Powiadomienie przewodniczącego o wystawieniu oceny
+    }
+
+    pthread_exit(NULL);
+}
+
+// Funkcja wątku przewodniczącego komisji B
+void* chairman_B() {
     printf("Komisja B rozpoczęła przyjmować studentów!\n");
 
     int total_passed_exam_A, graded_students = 0, is_commission_A_finished = 0;
@@ -147,14 +245,38 @@ void* commission_B() {
             continue;
         }      
 
-        sleep(rand() % 3 + 2);  // Symulacja czasu do przygotowania pytań
+        // Synchronizacja - czekanie na pozostałych dwóch członków komisji
+        pthread_mutex_lock(&mutex_B);
+        start_B = 1;  // Ustawienie flagi informującej, że można rozpocząć losowanie
+        pthread_cond_broadcast(&start_cond_B);  // Powiadomienie wszystkich pozostałych członków komisji, aby rozpoczęli pracę
+        pthread_mutex_unlock(&mutex_B);
 
-        // Przypisanie losowej oceny do PIDu studenta
-        if (rand() % 100 < 95) {  // 95% szans na ocenę pozytywną
-            msg.grade_B = grades[rand() % (NUM_GRADES - 1)];  // Pula pozytywnych ocen
-        } else {
-            msg.grade_B = grades[5];  // 5% szans na ocenę 2.0
+        sleep(rand() % 3 + 2); // Symulacja czasu na przygotowanie pytania
+
+        pthread_mutex_lock(&mutex_B);
+        while (ready_count_B < 2) {  // Oczekiwanie, aż obaj członkowie zakończą zadanie
+            pthread_cond_wait(&cond_B, &mutex_B);
         }
+
+        if (rand() % 100 < 95) {  // 95% szans na ocenę pozytywną
+            member_scores_B[2] = grades[rand() % (NUM_GRADES - 1)];  // Pula pozytywnych ocen
+        } else {
+            member_scores_B[2] = grades[5];  // 5% szans na ocenę 2.0
+        }
+
+        pthread_mutex_unlock(&mutex_B);
+
+        if (member_scores_B[2] == 2.0) {  
+            msg.grade_B = member_scores_B[2]; // Dla oceny 2.0 wystawionej przez przewodniczącego jest przypisywana ta ocena, aby zapewnić zdawalność na poziomie 5%
+        } else {
+            float total_score = 0.0;
+            for (int i = 0; i < 3; i++) {  // Suma ocen wszystkich członków komisji
+                total_score += member_scores_B[i];
+            }
+            msg.grade_B = round_grade(total_score / 3.0); // Oblicznie średniej ocen i jej zaokrąglenie 
+        }
+
+        ready_count_B = 0;  // Reset licznika gotowości dla członków komisji
 
         // Wysyłanie oceny z egzaminu B do dziekana
         msg.msg_type = COMMISSION_TO_DEAN;
@@ -162,7 +284,7 @@ void* commission_B() {
             perror("Błąd wysyłania komunikatu!\n");
             exit(EXIT_FAILURE);
         } else {
-            printf("Komisja B wystawiła ocenę: %.1f dla PID: %d\n", msg.grade_B, msg.pid);
+            printf("\033[94mKomisja B wystawiła ocenę: %.1f dla PID: %d\033[0m\n", msg.grade_B, msg.pid);
         }
 
         // Wysyłanie oceny z egzaminu B do studenta
@@ -178,23 +300,63 @@ void* commission_B() {
         is_commission_A_finished = shared_data->commission_A_done;
 
         if (total_passed_exam_A == graded_students && is_commission_A_finished == 1) { // Sprawdzenie czy komisja A zakończyła pracę i czy obsłużono każdego studenta
+            pthread_mutex_lock(&mutex_B);
+            members_end_B = 1;  // Ustawienie flagi zakończenia pracy komisji
+            pthread_mutex_unlock(&mutex_B);
+
             shared_data->commission_B_done = 1;
-            printf("Komisja B: Wszyscy studenci z kierunku podeszli do egzaminu teoretycznego. Komisja kończy wystawianie ocen.\n");
+            printf("\033[31mKomisja B: Wszyscy studenci z kierunku podeszli do egzaminu teoretycznego. Komisja kończy wystawianie ocen.\033[0m\n");
             break;  // Zakończenie pracy komisji
         }
     }
     pthread_exit(NULL);
 }
 
+// Funkcja wątku członka komisji B
+void* commission_member_B(void* arg) {
+    int member_id = *((int*)arg);
+
+    while (1) {
+        srand(time(NULL) ^ (unsigned int)pthread_self());
+
+        pthread_mutex_lock(&mutex_B);
+        if (members_end_B == 1) {
+            pthread_mutex_unlock(&mutex_B);
+            break;  // Zakończenie pracy wątku
+        }
+        pthread_mutex_unlock(&mutex_B);
+
+        // Oczekiwanie na sygnał od przewodniczącego, by rozpocząć losowanie pytania
+        pthread_mutex_lock(&mutex_B);
+        while (!start_B) {
+            pthread_cond_wait(&start_cond_B, &mutex_B);
+        }
+        pthread_mutex_unlock(&mutex_B);
+
+        sleep(rand() % 3 + 2); // Symulacja czasu na przygotowanie pytania
+
+        member_scores_B[member_id] = grades[rand() % (NUM_GRADES)]; // Wystawienie oceny przez członka komisji
+
+        pthread_mutex_lock(&ready_count_mutex_B);
+        ready_count_B++; // Flaga informująca o zakończeniu zadania
+        pthread_mutex_unlock(&ready_count_mutex_B);
+
+        pthread_cond_signal(&cond_B); // Powiadomienie przewodniczącego o wystawieniu oceny
+    }
+
+    pthread_exit(NULL);
+}
+
 void create_commission_A() {
     pthread_t chairman, member_1, member_2;
+    int member_1_id = 0, member_2_id = 1;
 
     // Tworzenie wątku przewodniczącego
-    pthread_create(&chairman, NULL, commission_A, NULL);
+    pthread_create(&chairman, NULL, chairman_A, NULL);
 
-    // Tworzenie wątków dla dwóch pozostałych członków komisji
-    pthread_create(&member_1, NULL, commission_member, NULL);
-    pthread_create(&member_2, NULL, commission_member, NULL);
+    // Tworzenie wątków dla dwóch pozostałych członków komisji z identyfikatorami
+    pthread_create(&member_1, NULL, commission_member_A, &member_1_id);
+    pthread_create(&member_2, NULL, commission_member_A, &member_2_id);
 
     // Oczekiwanie na zakończenie pracy pozostałych wątków
     pthread_join(chairman, NULL);
@@ -204,13 +366,14 @@ void create_commission_A() {
 
 void create_commission_B() {
     pthread_t chairman, member_1, member_2;
+    int member_1_id = 0, member_2_id = 1;
 
     // Tworzenie wątku przewodniczącego
-    pthread_create(&chairman, NULL, commission_B, NULL);
+    pthread_create(&chairman, NULL, chairman_B, NULL);
 
     // Tworzenie wątków dla dwóch pozostałych członków komisji
-    pthread_create(&member_1, NULL, commission_member, NULL);
-    pthread_create(&member_2, NULL, commission_member, NULL);
+    pthread_create(&member_1, NULL, commission_member_B, &member_1_id);
+    pthread_create(&member_2, NULL, commission_member_B, &member_2_id);
 
     // Oczekiwanie na zakończenie pracy pozostałych wątków
     pthread_join(chairman, NULL);
@@ -314,7 +477,7 @@ int main() {
         }
     }
 
-    sem_p(sem_id, SEM_ACTIVE_PROCESS);
+    sem_p(sem_id, SEM_ACTIVE_PROCESS); // Informacja, dla programu Dziekan o zakończonej pracy
 
     return 0;
 }
