@@ -85,7 +85,7 @@ float round_grade(float average) {
         return 4.0;
     } else if (average > 3.0) {
         return 3.5;
-    } else if (average == 3.0) {
+    } else if (average > 2.5) {
         return 3.0;
     } else {
         return 2.0;
