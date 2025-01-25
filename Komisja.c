@@ -178,6 +178,11 @@ void* chairman_A() {
         if (graded_students == total_students) {
             printf("\033[31mKomisja A: Wszyscy studenci z kierunku podeszli do egzaminu praktycznego. Komisja kończy wystawianie ocen.\033[0m\n");
 
+            // Celem tych dwóch linii jest obsłużenie skrajnego przypadku, gdy wszyscy studenci powtarzają egzamin i mają już ocenę z egzaminu praktycznego
+            // Nie przeszkadzają one w normalnej pracy programu, ale są zbędne ponieważ projekt z założenia nie pozwala na dojście do tak skrajnego przypadku
+            start_A = 1;
+            pthread_cond_broadcast(&start_cond_A);
+
             pthread_mutex_lock(&mutex_A);
             members_end_A = 1;  // Ustawienie flagi zakończenia pracy komisji
             pthread_mutex_unlock(&mutex_A);
